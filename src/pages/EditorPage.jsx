@@ -1,5 +1,3 @@
-```jsx
-import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { doc, getDoc } from 'firebase/firestore'
@@ -301,4 +299,4 @@ export default function EditorPage() {
     </div>
   )
 }
-```
+
