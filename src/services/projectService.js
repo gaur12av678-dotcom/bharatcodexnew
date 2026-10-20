@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, arrayRemove,
+  collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, arrayRemove, deleteField,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
@@ -10,24 +10,97 @@ const WEB_FILES = {
 }
 
 const REACT_FILES = {
-  'App.jsx': `// React 18 (UMD) — React global hai\nfunction App() {\n  const [count, setCount] = React.useState(0)\n  return (\n    <div className="app">\n      <h1>BharatCodex React</h1>\n      <p>You clicked {count} times</p>\n      <button onClick={() => setCount(count + 1)}>Click me</button>\n    </div>\n  )\n}\n`,
-  'styles.css': `.app {\n  font-family: system-ui, sans-serif;\n  text-align: center;\n  padding-top: 80px;\n  background: #0f172a;\n  color: #e2e8f0;\n  min-height: 100vh;\n  margin: 0;\n}\nbutton {\n  padding: 10px 24px;\n  border: none;\n  border-radius: 8px;\n  background: #22c55e;\n  color: white;\n  cursor: pointer;\n}\n`,
+  'package.json': `{
+  "name": "bharatcodex-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  }
 }
+`,
+  'index.html': `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BharatCodex App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+`,
+  'src/main.jsx': `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App.jsx'
+import './index.css'
 
+ReactDOM.createRoot(document.getElementById('root')).render(<App />)
+`,
+  'src/App.jsx': `import Navbar from './components/Navbar.jsx'
+
+export default function App() {
+  return (
+    <div>
+      <Navbar />
+      <main style={{ padding: '2rem', textAlign: 'center' }}>
+        <h1>Hello BharatCodex! 🚀</h1>
+        <p>src/components me naye components banao, sab yahan live dikhenge.</p>
+      </main>
+    </div>
+  )
+}
+`,
+  'src/components/Navbar.jsx': `export default function Navbar() {
+  return (
+    <nav style={{
+      display: 'flex', gap: '1rem', padding: '1rem 2rem',
+      background: '#1e293b', color: '#e2e8f0', alignItems: 'center'
+    }}>
+      <strong>⚡ BharatCodex</strong>
+      <a href="#" style={{ color: '#93c5fd' }}>Home</a>
+      <a href="#" style={{ color: '#93c5fd' }}>About</a>
+    </nav>
+  )
+}
+`,
+  'src/index.css': `* { margin: 0; box-sizing: border-box; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+`,
+}
 // Firestore doc IDs me '/' allowed nahi, isliye encode karte hain
 const fileId = (file) => encodeURIComponent((file.folder ? file.folder + '/' : '') + file.name)
 const pathOf = (file) => (file.folder ? file.folder + '/' : '') + file.name
 
-export async function createProject(user, name, type) {
-  const ref = await addDoc(collection(db, 'projects'), {
-    name, type,
-    ownerId: user.uid,
-    ownerName: user.displayName || user.email || 'User',
-    public: false,
-    folders: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  })
+const ref = await addDoc(collection(db, 'projects'), {
+  name, type,
+  ownerId: user.uid,
+  ownerName: user.displayName || user.email || 'User',
+  createdBy: user.displayName || user.email || 'User',
+  public: false,
+  trashed: false,
+  folders: type === 'react' ? ['src', 'src/components'] : [],
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+})
 
   const templates = type === 'react' ? REACT_FILES : WEB_FILES
   const batch = writeBatch(db)
@@ -51,12 +124,15 @@ export async function getProjectFiles(projectId) {
   return files
 }
 
-export async function saveFile(projectId, file, content) {
+export async function saveFile(projectId, file, content, editorName) {
   const batch = writeBatch(db)
   batch.set(doc(db, 'projects', projectId, 'files', fileId(file)), {
     name: file.name, folder: file.folder || '', content, updatedAt: Date.now(),
   })
-  batch.update(doc(db, 'projects', projectId), { updatedAt: Date.now() })
+  batch.update(doc(db, 'projects', projectId), {
+    updatedAt: Date.now(),
+    ...(editorName ? { lastEditedBy: editorName } : {}),
+  })
   await batch.commit()
 }
 
@@ -134,14 +210,22 @@ export async function deleteFolder(projectId, path) {
   await updateDoc(projRef, { folders })
 }
 
-export async function deleteProject(projectId) {
-  const filesSnap = await getDocs(collection(db, 'projects', projectId, 'files'))
-  const likesSnap = await getDocs(collection(db, 'projects', projectId, 'likes'))
-  const batch = writeBatch(db)
-  filesSnap.forEach((d) => batch.delete(d.ref))
-  likesSnap.forEach((d) => batch.delete(d.ref))
-  batch.delete(doc(db, 'projects', projectId))
-  await batch.commit()
+// Project trash mein jaata hai — permanent delete NAHI hota
+export async function trashProject(projectId, user) {
+  await updateDoc(doc(db, 'projects', projectId), {
+    trashed: true,
+    trashedAt: Date.now(),
+    trashedBy: user?.displayName || user?.email || 'User',
+  })
+}
+
+// Trash se wapas laao
+export async function restoreProject(projectId) {
+  await updateDoc(doc(db, 'projects', projectId), {
+    trashed: false,
+    trashedAt: deleteField(),
+    trashedBy: deleteField(),
+  })
 }
 
 export const timeAgo = (ts) => {
