@@ -33,6 +33,14 @@ export default function Navbar() {
         </span>
       </Link>
 
+      <Link
+  to="/explore"
+  className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium text-mute hover:text-body hover:bg-raise transition"
+>
+  <Compass size={15} />
+  <span className="hidden sm:inline">Explore</span>
+</Link>
+
       <div className="flex items-center gap-1 sm:gap-2">
         {isAdmin && (
           <Link
