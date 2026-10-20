@@ -49,7 +49,8 @@ export default function FileExplorer({
     setValue('')
     if (folder) setOpen((p) => new Set(p).add(folder))
   }
-
+<button type="button" title="New file here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('file', child.path) }}><FilePlus2 size={11} /></button>
+<button type="button" title="New folder here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('folder', child.path) }}><FolderPlus size={11} /></button>
   const startRename = (kind, data) => {
     setRenaming({ kind, ...data })
     setCreating(null)
