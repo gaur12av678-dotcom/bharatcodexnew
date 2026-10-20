@@ -1,4 +1,3 @@
-```jsx
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -329,4 +328,4 @@ export default function AdminPanel() {
     </div>
   )
 }
-```
+
