@@ -109,20 +109,31 @@ export default function Dashboard() {
     }
   }
 
-  const handleDelete = async (project) => {
-    const confirmed = window.confirm(
-      `"${project.name}" permanently delete kar doon?`
-    )
+ ```jsx
+  const handleCreate = async (event) => {
+    event.preventDefault()
 
-    if (!confirmed) return
+    const projectName = name.trim()
+    if (!projectName || busy || !user) return
+
+    setBusy(true)
 
     try {
-      await deleteProject(project.id)
+      const id = await createProject(user, projectName, type)
+
+      setShowModal(false)
+      setName('')
+      setType('web')
+
+      navigate(`/project/${id}`)
     } catch (error) {
-      console.error('Project deletion failed:', error)
-      alert('Delete failed. Dobara try karo.')
+      console.error('Project creation failed:', error)
+      alert('Project banane mein error aaya. Dobara try karo.')
+    } finally {
+      setBusy(false)
     }
   }
+
 
   return (
     <div className="h-full overflow-y-auto bg-base text-body transition-colors duration-200">
