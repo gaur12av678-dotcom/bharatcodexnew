@@ -11,7 +11,8 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import {
   createProject,
-  deleteProject,
+  trashProject,
+  restoreProject,
   timeAgo,
 } from '../services/projectService'
 import {
@@ -35,48 +36,24 @@ export default function Dashboard() {
   const [name, setName] = useState('')
   const [type, setType] = useState('web')
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (!user) {
-      setProjects([])
-      setLoading(false)
-      return
-    }
-
-    setLoading(true)
-
-    const projectsQuery = isAdmin
-      ? query(collection(db, 'projects'))
-      : query(
-          collection(db, 'projects'),
-          where('ownerId', '==', user.uid)
-        )
-
-    const unsubscribe = onSnapshot(
-      projectsQuery,
-      (snapshot) => {
-        const list = snapshot.docs.map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }))
-
-        list.sort(
-          (a, b) =>
-            (b.updatedAt || 0) - (a.updatedAt || 0)
-        )
-
-        setProjects(list)
-        setLoading(false)
-      },
-      (error) => {
-        console.error('Projects load failed:', error)
-        setLoading(false)
-        alert('Projects load nahi ho paaye. Dobara try karo.')
-      }
-    )
-
-    return unsubscribe
-  }, [user, isAdmin])
+const visible = projects.filter((p) => view === 'trash' ? p.trashed : !p.trashed)
+useEffect(() => {
+  if (!user) { setProjects([]); setLoading(false); return }
+  setLoading(true)
+  const projectsQuery = query(collection(db, 'projects'))
+  const unsubscribe = onSnapshot(projectsQuery, (snapshot) => {
+    const list = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+    list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    // Trash tab alag dikhayenge
+    setProjects(list)
+    setLoading(false)
+  }, (error) => {
+    console.error('Projects load failed:', error)
+    setLoading(false)
+    alert('Projects load nahi ho paaye. Dobara try karo.')
+  })
+  return unsubscribe
+}, [user])
 
   const handleCreate = async (event) => {
     event.preventDefault()
@@ -107,21 +84,27 @@ export default function Dashboard() {
     }
   }
 
-  const handleDelete = async (project) => {
-    const confirmed = window.confirm(
-      'Kya "' + project.name + '" project delete karna hai?'
-    )
-
-    if (!confirmed) return
-
-    try {
-      await deleteProject(project.id)
-    } catch (error) {
-      console.error('Project deletion failed:', error)
-      alert('Project delete nahi hua. Dobara try karo.')
-    }
+const handleDelete = async (project) => {
+  const confirmed = window.confirm(
+    `"${project.name}" trash mein jayega. Permanent delete NAHI hoga — baad mein restore kar sakte ho.`
+  )
+  if (!confirmed) return
+  try {
+    await trashProject(project.id, user)
+  } catch (error) {
+    console.error('Trash failed:', error)
+    alert('Trash nahi hua. Dobara try karo.')
   }
+}
 
+const handleRestore = async (project) => {
+  try {
+    await restoreProject(project.id)
+  } catch (error) {
+    console.error('Restore failed:', error)
+    alert('Restore nahi hua. Dobara try karo.')
+  }
+}
   return (
     <div className="h-full overflow-y-auto bg-base text-body transition-colors duration-200">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
