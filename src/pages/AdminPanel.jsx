@@ -119,9 +119,11 @@ export default function AdminPanel() {
   }
 
   const handleDeleteProject = async (project) => {
-    const confirmed = window.confirm(
-      `"${project.name}" (${project.ownerName || 'Unknown owner'}) delete kar doon?`
-    )
+  ```jsx
+const confirmed = window.confirm(
+  `"${project.name}" (${project.ownerName || 'Unknown owner'}) delete kar doon?`
+)
+```
 
     if (!confirmed) return
 
