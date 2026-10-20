@@ -133,11 +133,9 @@ export default function Dashboard() {
             </h1>
 
             <p className="text-mute text-sm mt-1">
-              {isAdmin
-                ? `Admin view — team ke ${projects.length} projects`
-                : `${projects.length} project${
-                    projects.length === 1 ? '' : 's'
-                  }`}
+{isAdmin
+  ? 'Admin view - team ke ' + projects.length + ' projects'
+  : projects.length + ' project' + (projects.length === 1 ? '' : 's')}
             </p>
           </div>
 
