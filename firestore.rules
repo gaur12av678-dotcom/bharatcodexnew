@@ -2,54 +2,57 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
-    }
+    function signedIn() { return request.auth != null; }
 
     function isAdmin() {
       return signedIn()
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // Abhi tak koi admin assign nahi hua (pehla user admin banega)
     function noAdminAssigned() {
       return !exists(/databases/$(database)/documents/meta/app)
         || get(/databases/$(database)/documents/meta/app).data.adminAssigned != true;
     }
 
-    // ---- USERS ----
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
-
-      // Khud ka doc banao. Member hamesha ban sakte ho.
-      // Admin role SIRF tab, jab abhi tak koi admin assign nahi hua.
       allow create: if signedIn() && request.auth.uid == userId
         && (request.resource.data.role == 'member'
             || (request.resource.data.role == 'admin' && noAdminAssigned()));
-
       allow update, delete: if isAdmin();
     }
 
-    // ---- META (first-admin tracking) ----
     match /meta/{docId} {
       allow read: if signedIn();
       allow write: if noAdminAssigned() || isAdmin();
     }
 
-    // ---- PROJECTS ----
     match /projects/{projectId} {
-      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      function isPublic() {
+        return get(/databases/$(database)/documents/projects/$(projectId)).data.public == true;
+      }
+      function isOwner() {
+        return signedIn()
+          && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+      }
+
+      // Public project koi bhi signed-in user dekh sakta hai
+      allow read: if isOwner() || isAdmin() || isPublic();
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if signedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow update, delete: if isOwner() || isAdmin();
 
       match /files/{fileId} {
-        allow read, write: if signedIn()
-          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid
-              || isAdmin());
+        allow read: if isOwner() || isAdmin() || isPublic();
+        allow write: if isOwner() || isAdmin();
+      }
+
+      // Likes: har user sirf apna like doc banaye/hata sake
+      match /likes/{uid} {
+        allow read: if signedIn();
+        allow create, delete: if signedIn() && request.auth.uid == uid;
       }
     }
 
-    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
