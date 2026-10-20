@@ -4,22 +4,21 @@ import SignIn from './pages/SignIn'
 import Dashboard from './pages/Dashboard'
 import EditorPage from './pages/EditorPage'
 import AdminPanel from './pages/AdminPanel'
+import Explore from './pages/Explore'
 import Navbar from './components/Navbar'
 import { Loader2 } from 'lucide-react'
 
 const FullScreenLoader = () => (
-  <div className="h-screen flex items-center justify-center bg-slate-950">
+  <div className="h-screen flex items-center justify-center bg-base text-body">
     <Loader2 className="animate-spin text-blue-500" size={36} />
   </div>
 )
 
 const Protected = ({ children, adminOnly = false }) => {
   const { user, profile, loading, isAdmin } = useAuth()
-
   if (loading || (user && !profile)) return <FullScreenLoader />
   if (!user) return <Navigate to="/signin" replace />
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />
-
   return (
     <div className="h-screen flex flex-col">
       <Navbar />
@@ -34,6 +33,7 @@ export default function App() {
       <Routes>
         <Route path="/signin" element={<SignIn />} />
         <Route path="/" element={<Protected><Dashboard /></Protected>} />
+        <Route path="/explore" element={<Protected><Explore /></Protected>} />
         <Route path="/project/:id" element={<Protected><EditorPage /></Protected>} />
         <Route path="/admin" element={<Protected adminOnly><AdminPanel /></Protected>} />
         <Route path="*" element={<Navigate to="/" replace />} />
