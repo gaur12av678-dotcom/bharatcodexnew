@@ -52,13 +52,9 @@ export default function EditorPage() {
         const snap = await getDoc(doc(db, 'projects', id))
         if (!snap.exists()) { if (!cancelled) setDenied(true); return }
         const data = { id: snap.id, ...snap.data() }
-        const owner = isAdmin || (user && data.ownerId === user.uid)
-        if (!owner && !data.public) { if (!cancelled) setDenied(true); return }
-        const files = await getProjectFiles(id)
-        if (cancelled) return
-        setProject(data)
-        setFileList(files)
-        setReadOnly(!owner)
+        if (data.trashed) { if (!cancelled) setDenied(true); return }  // trashed project edit nahi hoga
+...
+setReadOnly(false)  // TEAM MODE: har signed-in member edit kar sakta hai
         setActive(files[0] ? (files[0].folder ? files[0].folder + '/' + files[0].name : files[0].name) : null)
       } catch (error) {
         console.error('Project load failed:', error)
@@ -77,7 +73,7 @@ export default function EditorPage() {
     if (!pending) return
     pendingRef.current = null
     try {
-      await saveFile(id, pending.file, pending.content)
+     await saveFile(id, pending.file, pending.content, user?.displayName || user?.email)
       if (!pendingRef.current) setSaveState('saved')
     } catch (error) {
       console.error('File save failed:', error)
