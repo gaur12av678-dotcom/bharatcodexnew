@@ -24,12 +24,10 @@ export default function Navbar() {
     }
   }
 
-  const avatarUrl =
-    profile?.photoURL ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(
-      profile?.name || 'U'
-    )}&background=1e293b&color=94a3b8`
-
+<WritingBlock id="61483" variant="document">```jsx
+const avatarUrl =
+profile?.photoURL ||
+https://ui-avatars.com/api/?name=$DIL0&background=1e293b&color=94a3b8
   return (
     <header className="h-14 shrink-0 bg-surface border-b border-edge flex items-center justify-between px-3 sm:px-4">
       {/* Brand */}
