@@ -1,25 +1,48 @@
+```jsx
 import { createContext, useContext, useEffect, useState } from 'react'
 
-const ThemeContext = createContext()
+const ThemeContext = createContext(null)
 
 export function ThemeProvider({ children }) {
-  // localStorage me saved theme, nahi to default dark
-  const [theme, setTheme] = useState(() => localStorage.getItem('bharatcodex-theme') || 'dark')
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem('bharatcodex-theme') === 'light'
+        ? 'light'
+        : 'dark'
+    } catch {
+      return 'dark'
+    }
+  })
 
   useEffect(() => {
-    // html pe .light class toggle karo — CSS variables isi se change hote hain
-    document.documentElement.classList.toggle('light', theme === 'light')
-    localStorage.setItem('bharatcodex-theme', theme)
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.documentElement.dataset.theme = theme
+
+    try {
+      localStorage.setItem('bharatcodex-theme', theme)
+    } catch {
+      // Theme still works for the current session.
+    }
   }, [theme])
 
-  const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+  const toggleTheme = () => {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+  }
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
       {children}
     </ThemeContext.Provider>
   )
 }
 
-// Kisi bhi component me: const { theme, toggleTheme } = useTheme()
-export const useTheme = () => useContext(ThemeContext)
+export function useTheme() {
+  const context = useContext(ThemeContext)
+
+  if (!context) {
+    throw new Error('useTheme must be used inside ThemeProvider')
+  }
+
+  return context
+}
+```
