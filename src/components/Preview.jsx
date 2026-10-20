@@ -43,7 +43,10 @@ ${CONSOLE_HOOK}
 </body>
 </html>`
 }
-
+// Import/export lines hata do — saari jsx files ek saath compile hoti hain
+const stripImports = (code) => code
+  .replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
+  .replace(/export\s+default\s+/g, '')
 const buildReactSrcDoc = (files) => {
   const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
   const entry = findOne(files, /\.jsx$/i)
