@@ -25,21 +25,30 @@ const CONSOLE_HOOK = `<script>
 const pick = (files, regex) => Object.keys(files).filter((k) => regex.test(k)).sort()
 const findOne = (files, regex) => pick(files, regex)[0]
 
-const buildWebSrcDoc = (files) => {
+const buildReactSrcDoc = (files) => {
   const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
-  const js = pick(files, /\.js$/i).map((k) => files[k]).join('\n')
-  const htmlEntry = findOne(files, /(^|\/)index\.html?$/i)
+  const jsx = pick(files, /\.jsx$/i)
+    .filter((k) => !/(^|\/)main\.jsx$/i.test(k))   // main.jsx render khud karta hai — skip
+    .map((k) => stripImports(files[k]))
+    .join('\n\n')
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"><\/script>
 <style>${css}</style>
 </head>
 <body>
-${htmlEntry ? files[htmlEntry] : ''}
+<div id="root"></div>
 ${CONSOLE_HOOK}
-<script>${escapeScript(js)}<\/script>
+<script type="text/babel" data-presets="react">
+${jsx}
+const __root = ReactDOM.createRoot(document.getElementById('root'));
+__root.render(<App />);
+<\/script>
 </body>
 </html>`
 }
