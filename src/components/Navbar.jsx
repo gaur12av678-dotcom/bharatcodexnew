@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { Code2, LogOut, ShieldCheck, Sun, Moon } from 'lucide-react'
+import { Code2, LogOut, ShieldCheck, Sun, Moon, Compass } from 'lucide-react'
 
 export default function Navbar() {
   const { profile, isAdmin, logout } = useAuth()
