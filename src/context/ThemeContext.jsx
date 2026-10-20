@@ -5,28 +5,24 @@ const ThemeContext = createContext(null)
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem('bharatcodex-theme') === 'light'
-        ? 'light'
-        : 'dark'
+      return localStorage.getItem('bharatcodex-theme') === 'light' ? 'light' : 'dark'
     } catch {
       return 'dark'
     }
   })
 
   useEffect(() => {
+    // FIX: pehle sirf 'dark' class toggle ho rahi thi, 'light' kabhi nahi lagti thi
     document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.documentElement.classList.toggle('light', theme === 'light')
     document.documentElement.dataset.theme = theme
 
     try {
       localStorage.setItem('bharatcodex-theme', theme)
-    } catch {
-      // Theme still works for the current session.
-    }
+    } catch {}
   }, [theme])
 
-  const toggleTheme = () => {
-    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
-  }
+  const toggleTheme = () => setTheme((c) => (c === 'dark' ? 'light' : 'dark'))
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
@@ -37,11 +33,6 @@ export function ThemeProvider({ children }) {
 
 export function useTheme() {
   const context = useContext(ThemeContext)
-
-  if (!context) {
-    throw new Error('useTheme must be used inside ThemeProvider')
-  }
-
+  if (!context) throw new Error('useTheme must be used inside ThemeProvider')
   return context
 }
-
