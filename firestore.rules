@@ -27,26 +27,17 @@ service cloud.firestore {
       allow write: if noAdminAssigned() || isAdmin();
     }
 
+    // ===== TEAM MODE: BharatCodex team ke saare members =====
     match /projects/{projectId} {
-      function isPublic() {
-        return get(/databases/$(database)/documents/projects/$(projectId)).data.public == true;
-      }
-      function isOwner() {
-        return signedIn()
-          && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
-      }
-
-      // Public project koi bhi signed-in user dekh sakta hai
-      allow read: if isOwner() || isAdmin() || isPublic();
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isOwner() || isAdmin();
+      // Sab signed-in members: sab projects dekhen, create karein, edit karein, trash karein
+      allow read, create, update: if signedIn();
+      // NOTE: delete permission hi nahi hai — permanent delete IMPOSSIBLE hai
+      // (sirf files/folders subcollection mein delete allowed hai)
 
       match /files/{fileId} {
-        allow read: if isOwner() || isAdmin() || isPublic();
-        allow write: if isOwner() || isAdmin();
+        allow read, write: if signedIn();
       }
 
-      // Likes: har user sirf apna like doc banaye/hata sake
       match /likes/{uid} {
         allow read: if signedIn();
         allow create, delete: if signedIn() && request.auth.uid == uid;
