@@ -1,4 +1,3 @@
-```jsx
 import { useMemo, useState } from 'react'
 import {
   Monitor,
@@ -145,4 +144,4 @@ export default function Preview({ type, files }) {
     </div>
   )
 }
-```
+
