@@ -1,23 +1,30 @@
+```jsx
 import { useMemo, useState } from 'react'
-import { Monitor, Smartphone, Tablet, RefreshCw } from 'lucide-react'
+import {
+  Monitor,
+  Smartphone,
+  Tablet,
+  RefreshCw,
+} from 'lucide-react'
 
-// </script> tag user code me aaye to preview break na ho
-const escapeScript = (code) => code.replace(/<\/script>/gi, '<\\/script>')
+// User code mein </script> aaye to script tag prematurely close na ho.
+const escapeScript = (code = '') =>
+  code.replace(/<\/script/gi, '<\\/script')
 
-const buildWebSrcDoc = (f) => `<!DOCTYPE html>
+const buildWebSrcDoc = (files) => `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<style>${f['style.css'] || ''}</style>
+<style>${files['style.css'] || ''}</style>
 </head>
 <body>
-${f['index.html'] || ''}
-<script>${escapeScript(f['script.js'] || '')}<\/script>
+${files['index.html'] || ''}
+<script>${escapeScript(files['script.js'] || '')}<\/script>
 </body>
 </html>`
 
-const buildReactSrcDoc = (f) => `<!DOCTYPE html>
+const buildReactSrcDoc = (files) => `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
@@ -25,12 +32,12 @@ const buildReactSrcDoc = (f) => `<!DOCTYPE html>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"><\/script>
-<style>${f['styles.css'] || ''}</style>
+<style>${files['styles.css'] || ''}</style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
-${escapeScript(f['App.jsx'] || '')}
+${escapeScript(files['App.jsx'] || '')}
 const __root = ReactDOM.createRoot(document.getElementById('root'));
 __root.render(<App />);
 <\/script>
@@ -48,63 +55,94 @@ export default function Preview({ type, files }) {
   const [reloadKey, setReloadKey] = useState(0)
 
   const srcDoc = useMemo(
-    () => (type === 'react' ? buildReactSrcDoc(files) : buildWebSrcDoc(files)),
+    () =>
+      type === 'react'
+        ? buildReactSrcDoc(files)
+        : buildWebSrcDoc(files),
     [type, files]
   )
 
   const active = VIEWPORTS[vp]
 
   return (
-    <div className="h-full flex flex-col bg-slate-950">
-      <div className="h-10 shrink-0 flex items-center gap-2 px-3 border-b border-slate-800">
-        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+    <div className="h-full min-h-0 flex flex-col bg-base text-body transition-colors duration-200">
+      {/* Preview toolbar */}
+      <div className="min-h-10 shrink-0 flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-edge bg-surface">
+        <span className="text-[11px] font-bold text-faint uppercase tracking-widest">
           Live Preview
         </span>
+
         <div className="flex-1" />
-        <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1 border border-slate-800">
-          {Object.entries(VIEWPORTS).map(([key, v]) => (
-            <button
-              key={key}
-              onClick={() => setVp(key)}
-              title={key}
-              className={`p-1.5 rounded-md transition ${
-                vp === key ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              <v.icon size={15} />
-            </button>
-          ))}
+
+        {/* Responsive viewport selector */}
+        <div className="flex items-center gap-1 bg-raise rounded-lg p-1 border border-edge">
+          {Object.entries(VIEWPORTS).map(([key, viewport]) => {
+            const Icon = viewport.icon
+            const selected = vp === key
+
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setVp(key)}
+                title={`${key.charAt(0).toUpperCase()}${key.slice(1)} preview`}
+                aria-label={`${key} preview`}
+                aria-pressed={selected}
+                className={`p-1.5 rounded-md transition ${
+                  selected
+                    ? 'bg-blue-600 text-white'
+                    : 'text-mute hover:text-body hover:bg-edge'
+                }`}
+              >
+                <Icon size={15} />
+              </button>
+            )
+          })}
         </div>
-        <span className="text-[11px] font-mono text-slate-500 bg-slate-900 border border-slate-800 rounded-md px-2 py-1">
-          {active.width === '100%' ? 'Full' : `${active.width}px`}
+
+        {/* Current viewport width */}
+        <span className="text-[11px] font-mono text-faint bg-raise border border-edge rounded-md px-2 py-1">
+          {active.width === '100%'
+            ? 'Full'
+            : `${active.width}px`}
         </span>
+
+        {/* Reload */}
         <button
-          onClick={() => setReloadKey((k) => k + 1)}
+          type="button"
+          onClick={() => setReloadKey((key) => key + 1)}
           title="Reload preview"
-          className="p-1.5 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 transition"
+          aria-label="Reload preview"
+          className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition"
         >
           <RefreshCw size={15} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto p-3 flex justify-center">
+      {/* Preview canvas */}
+      <div className="flex-1 min-h-0 overflow-auto p-3 flex justify-center bg-base">
         <div
-          className="bg-white rounded-xl overflow-hidden shadow-2xl ring-1 ring-slate-800 transition-all duration-300"
+          className="bg-white rounded-xl overflow-hidden shadow-2xl ring-1 ring-edge transition-[width] duration-300 shrink-0"
           style={{
-            width: active.width === '100%' ? '100%' : active.width,
+            width:
+              active.width === '100%'
+                ? '100%'
+                : `${active.width}px`,
             maxWidth: '100%',
             height: '100%',
+            minHeight: '200px',
           }}
         >
           <iframe
             key={reloadKey}
-            title="preview"
+            title="Project live preview"
             sandbox="allow-scripts"
             srcDoc={srcDoc}
-            className="w-full h-full bg-white"
+            className="block w-full h-full bg-white border-0"
           />
         </div>
       </div>
     </div>
   )
 }
+```
