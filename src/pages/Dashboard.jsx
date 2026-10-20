@@ -37,7 +37,6 @@ export default function Dashboard() {
   const [type, setType] = useState('web')
   const [busy, setBusy] = useState(false)
 
-  // Firebase se projects ko real-time mein load karo.
   useEffect(() => {
     if (!user) {
       setProjects([])
@@ -90,7 +89,7 @@ export default function Dashboard() {
     setBusy(true)
 
     try {
-      const id = await createProject(
+      const projectId = await createProject(
         user,
         projectName,
         type
@@ -100,7 +99,7 @@ export default function Dashboard() {
       setName('')
       setType('web')
 
-      navigate(`/project/${id}`)
+      navigate('/project/' + projectId)
     } catch (error) {
       console.error('Project creation failed:', error)
       alert('Project banane mein error aaya. Dobara try karo.')
@@ -109,36 +108,24 @@ export default function Dashboard() {
     }
   }
 
- ```jsx
-  const handleCreate = async (event) => {
-    event.preventDefault()
+  const handleDelete = async (project) => {
+    const confirmed = window.confirm(
+      'Kya "' + project.name + '" project delete karna hai?'
+    )
 
-    const projectName = name.trim()
-    if (!projectName || busy || !user) return
-
-    setBusy(true)
+    if (!confirmed) return
 
     try {
-      const id = await createProject(user, projectName, type)
-
-      setShowModal(false)
-      setName('')
-      setType('web')
-
-      navigate(`/project/${id}`)
+      await deleteProject(project.id)
     } catch (error) {
-      console.error('Project creation failed:', error)
-      alert('Project banane mein error aaya. Dobara try karo.')
-    } finally {
-      setBusy(false)
+      console.error('Project deletion failed:', error)
+      alert('Project delete nahi hua. Dobara try karo.')
     }
   }
-
 
   return (
     <div className="h-full overflow-y-auto bg-base text-body transition-colors duration-200">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        {/* Dashboard header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-body">
@@ -164,7 +151,6 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Loading state */}
         {loading ? (
           <div className="flex justify-center py-20">
             <Loader2
@@ -173,7 +159,6 @@ export default function Dashboard() {
             />
           </div>
         ) : projects.length === 0 ? (
-          /* Empty state */
           <div className="text-center py-20 border border-dashed border-edge rounded-2xl">
             <FolderGit2
               size={40}
@@ -198,7 +183,6 @@ export default function Dashboard() {
             </button>
           </div>
         ) : (
-          /* Project cards */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {projects.map((project) => (
               <div
@@ -254,7 +238,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* New Project Modal */}
       {showModal && (
         <div
           className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4 py-6"
