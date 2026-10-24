@@ -49,8 +49,6 @@ export default function FileExplorer({
     setValue('')
     if (folder) setOpen((p) => new Set(p).add(folder))
   }
-<button type="button" title="New file here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('file', child.path) }}><FilePlus2 size={11} /></button>
-<button type="button" title="New folder here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('folder', child.path) }}><FolderPlus size={11} /></button>
   const startRename = (kind, data) => {
     setRenaming({ kind, ...data })
     setCreating(null)
@@ -115,6 +113,8 @@ export default function FileExplorer({
               <span className="text-xs text-body truncate flex-1">{name}</span>
               {!readOnly && (
                 <span className="hidden group-hover:flex items-center shrink-0">
+                  <button type="button" title="New file here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('file', child.path) }}><FilePlus2 size={11} /></button>
+                  <button type="button" title="New folder here" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startCreate('folder', child.path) }}><FolderPlus size={11} /></button>
                   <button type="button" title="Rename folder" className="p-1 rounded text-faint hover:text-body" onClick={(e) => { e.stopPropagation(); startRename('folder', { oldPath: child.path }) }}><Pencil size={11} /></button>
                   <button type="button" title="Delete folder" className="p-1 rounded text-faint hover:text-red-400" onClick={(e) => { e.stopPropagation(); onDeleteFolder(child.path) }}><Trash2 size={11} /></button>
                 </span>
