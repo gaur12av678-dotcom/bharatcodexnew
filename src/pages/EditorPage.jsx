@@ -53,8 +53,12 @@ export default function EditorPage() {
         if (!snap.exists()) { if (!cancelled) setDenied(true); return }
         const data = { id: snap.id, ...snap.data() }
         if (data.trashed) { if (!cancelled) setDenied(true); return }  // trashed project edit nahi hoga
-...
-setReadOnly(false)  // TEAM MODE: har signed-in member edit kar sakta hai
+        if (cancelled) return
+        const files = await getProjectFiles(id)
+        if (cancelled) return
+        setProject(data)
+        setFileList(files)
+        setReadOnly(false)  // TEAM MODE: har signed-in member edit kar sakta hai
         setActive(files[0] ? (files[0].folder ? files[0].folder + '/' + files[0].name : files[0].name) : null)
       } catch (error) {
         console.error('Project load failed:', error)
