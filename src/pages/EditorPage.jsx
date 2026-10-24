@@ -14,7 +14,7 @@ import FileExplorer from '../components/FileExplorer'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -40,6 +40,7 @@ export default function EditorPage() {
   const [wordWrap, setWordWrap] = useState(true)
   const [minimap, setMinimap] = useState(false)
   const [showExplorer, setShowExplorer] = useState(true)
+  const [copied, setCopied] = useState(false)
 
   const timerRef = useRef(null)
   const pendingRef = useRef(null)
@@ -191,6 +192,18 @@ export default function EditorPage() {
     } catch (e) { console.error(e); alert('Update failed') }
   }
 
+  // Share: project ka link copy karo (signed-in member khol sakta hai)
+  const shareProject = async () => {
+    const link = window.location.origin + '/project/' + id
+    try {
+      await navigator.clipboard.writeText(link)
+    } catch (e) {
+      window.prompt('Ye link copy karo:', link)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   const formatCode = () => {
     editorRef.current?.getAction('editor.action.formatDocument')?.run()
   }
@@ -267,9 +280,15 @@ export default function EditorPage() {
             <button type="button" onClick={downloadZip} title="Download ZIP" className={toolBtn}><Download size={15} /></button>
           </div>
         )}
+        <button type="button" onClick={shareProject} title="Share link copy karo" className={`${toolBtn} flex items-center gap-1 text-xs`}>
+          <Share2 size={15} className={copied ? 'text-emerald-400' : ''} />
+          {copied && <span className="text-emerald-400">Copied!</span>}
+        </button>
+
         {!readOnly && (
           <button type="button" onClick={togglePublic} title={project.public ? 'Public — Explore me dikhta hai' : 'Private'} className={`${toolBtn} flex items-center gap-1 text-xs`}>
             {project.public ? <Globe size={15} className="text-emerald-400" /> : <Lock size={15} />}
+            <span className="hidden sm:inline">{project.public ? 'Public' : 'Private'}</span>
           </button>
         )}
 
