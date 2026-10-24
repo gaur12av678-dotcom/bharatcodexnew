@@ -29,7 +29,7 @@ const buildReactSrcDoc = (files) => {
   const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
   const jsx = pick(files, /\.jsx$/i)
     .filter((k) => !/(^|\/)main\.jsx$/i.test(k))   // main.jsx render khud karta hai — skip
-    .map((k) => stripImports(files[k]))
+    .map((k) => escapeScript(stripImports(files[k])))
     .join('\n\n')
   return `<!DOCTYPE html>
 <html>
@@ -56,29 +56,23 @@ __root.render(<App />);
 const stripImports = (code) => code
   .replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
   .replace(/export\s+default\s+/g, '')
-const buildReactSrcDoc = (files) => {
+// Plain HTML/CSS/JS project — index.html ke andar saari CSS + JS inline merge
+const buildWebSrcDoc = (files) => {
+  const htmlKey = findOne(files, /(^|\/)index\.html?$/i) || findOne(files, /\.html?$/i)
   const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
-  const entry = findOne(files, /\.jsx$/i)
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"><\/script>
-<style>${css}</style>
-</head>
-<body>
-<div id="root"></div>
-${CONSOLE_HOOK}
-<script type="text/babel" data-presets="react">
-${entry ? escapeScript(files[entry]) : ''}
-const __root = ReactDOM.createRoot(document.getElementById('root'));
-__root.render(<App />);
-<\/script>
-</body>
-</html>`
+  const js = pick(files, /\.m?js$/i).map((k) => escapeScript(files[k])).join('\n;\n')
+  let html = htmlKey ? files[htmlKey] : '<!-- index.html nahi mila -->'
+  // local <link rel="stylesheet"> aur <script src> hata do (inline merge ho rahe hain)
+  html = html
+    .replace(/<link[^>]+rel=["']?stylesheet["']?[^>]*href=["'](?!https?:|\/\/)[^"']+["'][^>]*>/gi, '')
+    .replace(/<link[^>]+href=["'](?!https?:|\/\/)[^"']+\.css["'][^>]*>/gi, '')
+    .replace(/<script[^>]+src=["'](?!https?:|\/\/)[^"']+["'][^>]*>\s*<\/script>/gi, '')
+  const head = `<meta charset="UTF-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1.0" />\n${CONSOLE_HOOK}\n<style>${css}</style>`
+  const body = js ? `<script>\n${js}\n<\/script>` : ''
+  if (/<\/head>/i.test(html)) html = html.replace(/<\/head>/i, head + '\n</head>')
+  else html = `<!DOCTYPE html><html><head>${head}</head><body>` + html
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, body + '\n</body>')
+  return html + body + (/<body/i.test(html) ? '' : '</body></html>')
 }
 
 const VIEWPORTS = {
