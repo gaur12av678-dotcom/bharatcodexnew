@@ -31,8 +31,8 @@ service cloud.firestore {
     match /projects/{projectId} {
       // Sab signed-in members: sab projects dekhen, create karein, edit karein, trash karein
       allow read, create, update: if signedIn();
-      // NOTE: delete permission hi nahi hai — permanent delete IMPOSSIBLE hai
-      // (sirf files/folders subcollection mein delete allowed hai)
+      // Permanent delete sirf ADMIN kar sakta hai (Admin Panel se)
+      allow delete: if isAdmin();
 
       match /files/{fileId} {
         allow read, write: if signedIn();
