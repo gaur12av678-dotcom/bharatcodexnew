@@ -18,6 +18,7 @@ const CONSOLE_HOOK = `<script>
     console[level] = function () { send(level, Array.prototype.slice.call(arguments)); orig.apply(console, arguments) }
   })
   window.onerror = function (msg, src, line) { send('error', [msg + ' (line ' + line + ')']) }
+  window.addEventListener('unhandledrejection', function (e) { send('error', ['Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)]) })
 })()
 <\/script>`
 
@@ -166,9 +167,14 @@ export default function Preview({ type, files }) {
         <div className="h-36 shrink-0 flex flex-col border-t border-edge bg-surface">
           <div className="flex items-center justify-between px-3 py-1 border-b border-edge">
             <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Console</span>
-            <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body">
-              <Trash2 size={13} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => navigator.clipboard?.writeText(logs.map((l) => '[' + l.level + '] ' + l.text).join('\n'))} title="Console copy karo" className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-faint hover:text-body hover:bg-raise">
+                Copy
+              </button>
+              <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body">
+                <Trash2 size={13} />
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-1.5 font-mono text-[11px] leading-relaxed">
             {logs.length === 0 ? (
