@@ -11,21 +11,33 @@ export default function Explore() {
   const [projects, setProjects] = useState([])
   const [likes, setLikes] = useState({}) // id -> { count, liked }
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     const q = query(collection(db, 'projects'), where('public', '==', true))
     const unsub = onSnapshot(q, async (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => !p.trashed)
       list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      setError('')
       setProjects(list)
       setLoading(false)
       const info = {}
+      // ek project ka likes-read fail ho to baaki na rukein
       await Promise.all(list.map(async (p) => {
-        const s = await getDocs(collection(db, 'projects', p.id, 'likes'))
-        info[p.id] = { count: s.size, liked: s.docs.some((d) => d.id === user?.uid) }
+        try {
+          const s = await getDocs(collection(db, 'projects', p.id, 'likes'))
+          info[p.id] = { count: s.size, liked: s.docs.some((d) => d.id === user?.uid) }
+        } catch (e) {
+          console.error('Likes load failed:', e)
+          info[p.id] = { count: 0, liked: false }
+        }
       }))
       setLikes(info)
-    }, (e) => { console.error(e); setLoading(false) })
+    }, (e) => {
+      console.error('Explore load failed:', e)
+      setError((e.code ? '[' + e.code + '] ' : '') + (e.message || 'Unknown error'))
+      setLoading(false)
+    })
     return unsub
   }, [user?.uid])
 
@@ -36,7 +48,12 @@ export default function Explore() {
     try {
       if (cur.liked) await deleteDoc(ref)
       else await setDoc(ref, { likedAt: Date.now() })
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      console.error('Like save failed:', e)
+      // optimistic change wapis karo + batao
+      setLikes((prev) => ({ ...prev, [p.id]: cur }))
+      setError('Like save nahi hua: ' + (e.code ? '[' + e.code + '] ' : '') + (e.message || ''))
+    }
   }
 
   return (
@@ -49,13 +66,25 @@ export default function Explore() {
           <p className="text-mute text-sm mt-1">Community ke public projects — dekho, seekho, like karo!</p>
         </div>
 
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm">
+            <p className="font-semibold text-red-400 mb-1">Explore me problem aayi</p>
+            <p className="text-red-300 break-words font-mono text-xs">{error}</p>
+            {error.includes('permission') && (
+              <p className="mt-2 text-amber-300">
+                Firebase Console &gt; Firestore &gt; Rules me <b>firestore.rules</b> ka naya text paste karke <b>Publish</b> karo.
+              </p>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
         ) : projects.length === 0 ? (
           <div className="text-center py-20 border border-dashed border-edge rounded-2xl">
             <Code2 size={40} className="mx-auto text-faint mb-3" />
             <p className="text-mute">Abhi koi public project nahi hai.</p>
-            <p className="text-faint text-sm mt-1">Editor me jaake apne project ko public banao!</p>
+            <p className="text-faint text-sm mt-1">Editor me jaake upar Lock wale button se project ko <b>Public</b> banao!</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
