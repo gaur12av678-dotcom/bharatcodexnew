@@ -105,12 +105,61 @@ export async function createProject(user, name, type) {
 
   const templates = type === 'react' ? REACT_FILES : WEB_FILES
   const batch = writeBatch(db)
-  for (const [fname, content] of Object.entries(templates)) {
-    batch.set(doc(db, 'projects', ref.id, 'files', encodeURIComponent(fname)), {
-      name: fname, folder: '', content, updatedAt: Date.now(),
+  for (const [fpath, content] of Object.entries(templates)) {
+    const cut = fpath.lastIndexOf('/')
+    const folder = cut === -1 ? '' : fpath.slice(0, cut)
+    const fname = cut === -1 ? fpath : fpath.slice(cut + 1)
+    batch.set(doc(db, 'projects', ref.id, 'files', encodeURIComponent(fpath)), {
+      name: fname, folder, content, updatedAt: Date.now(),
     })
   }
   await batch.commit()
+  return ref.id
+}
+
+// ZIP / files se naya project banao (Import feature)
+const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache)(\/|$)/i
+const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|svg|woff2?|ttf|otf|eot|mp3|mp4|webm|mov|pdf|zip|rar|7z|exe|dll|so|bin|lock)$/i
+const MAX_FILE = 900000 // Firestore doc limit ~1MB
+
+export async function importProject(user, name, entries) {
+  // entries: [{ path, content }]
+  let list = entries.filter((e) => e.path && !SKIP.test(e.path) && !BINARY.test(e.path) && typeof e.content === 'string' && e.content.length <= MAX_FILE)
+  if (list.length === 0) throw new Error('NO_FILES')
+  // zip ke andar ek hi top folder ho (jaise repo-main/) to usse hata do
+  const tops = new Set(list.map((e) => e.path.split('/')[0]))
+  if (tops.size === 1 && list.every((e) => e.path.includes('/'))) {
+    list = list.map((e) => ({ ...e, path: e.path.split('/').slice(1).join('/') }))
+  }
+  if (list.length > 400) list = list.slice(0, 400)
+  const isReact = list.some((e) => /\.jsx$/i.test(e.path)) ||
+    list.some((e) => e.path === 'package.json' && /"react"/.test(e.content))
+  const folderSet = new Set()
+  for (const e of list) {
+    const parts = e.path.split('/').slice(0, -1)
+    let cur = ''
+    for (const part of parts) { cur = cur ? cur + '/' + part : part; folderSet.add(cur) }
+  }
+  const who = user.displayName || user.email || 'User'
+  const ref = await addDoc(collection(db, 'projects'), {
+    name, type: isReact ? 'react' : 'web',
+    ownerId: user.uid, ownerName: who, createdBy: who,
+    public: false, trashed: false,
+    folders: [...folderSet].sort(),
+    createdAt: Date.now(), updatedAt: Date.now(),
+  })
+  for (let i = 0; i < list.length; i += 400) {
+    const batch = writeBatch(db)
+    for (const e of list.slice(i, i + 400)) {
+      const cut = e.path.lastIndexOf('/')
+      batch.set(doc(db, 'projects', ref.id, 'files', encodeURIComponent(e.path)), {
+        name: cut === -1 ? e.path : e.path.slice(cut + 1),
+        folder: cut === -1 ? '' : e.path.slice(0, cut),
+        content: e.content, updatedAt: Date.now(),
+      })
+    }
+    await batch.commit()
+  }
   return ref.id
 }
 
@@ -170,7 +219,6 @@ export async function createFolder(projectId, path) {
 
 export async function renameFolder(projectId, oldPath, newPath) {
   const snap = await getDocs(collection(db, 'projects', projectId, 'files'))
-  const projSnap = await getDocs(collection(db, 'projects')) // folders array ke liye direct doc
   const batch = writeBatch(db)
   snap.docs.forEach((d) => {
     const f = d.data()
