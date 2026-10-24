@@ -1,5 +1,6 @@
 import {
-  collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, arrayRemove, deleteField,
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, deleteField,
+  query, orderBy, limit,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
@@ -233,7 +234,6 @@ export async function renameFolder(projectId, oldPath, newPath) {
   batch.update(projRef, { updatedAt: Date.now() })
   await batch.commit()
   // folders array update
-  const { getDoc } = await import('firebase/firestore')
   const p = await getDoc(projRef)
   const folders = p.data()?.folders || []
   const removed = folders.filter((f) => f === oldPath || f.startsWith(oldPath + '/'))
@@ -253,7 +253,6 @@ export async function deleteFolder(projectId, path) {
   const projRef = doc(db, 'projects', projectId)
   batch.update(projRef, { updatedAt: Date.now() })
   await batch.commit()
-  const { getDoc } = await import('firebase/firestore')
   const p = await getDoc(projRef)
   const folders = (p.data()?.folders || []).filter((f) => f !== path && !f.startsWith(path + '/'))
   await updateDoc(projRef, { folders })
@@ -266,6 +265,100 @@ export async function deleteProject(projectId) {
   snap.docs.forEach((d) => batch.delete(d.ref))
   await batch.commit()
   await deleteDoc(doc(db, 'projects', projectId))
+}
+
+
+// =====================================================================
+// VERSION HISTORY — project ka purana version wapis laane ke liye
+//   projects/{id}/versions/{vid}      -> chhota info (naam, time, kisne)
+//   projects/{id}/versionFiles/{vid}  -> files ka poora snapshot
+// =====================================================================
+const MAX_SNAPSHOT_BYTES = 900000 // Firestore doc limit ~1MB
+const MAX_AUTO_VERSIONS = 15
+
+const byteSize = (str) => new TextEncoder().encode(str).length
+const cleanFiles = (files) => files.map((f) => ({ name: f.name, folder: f.folder || '', content: f.content || '' }))
+
+export async function createVersion(projectId, user, files, folders, label = '', auto = false) {
+  const data = cleanFiles(files)
+  if (byteSize(JSON.stringify(data)) > MAX_SNAPSHOT_BYTES) throw new Error('VERSION_TOO_BIG')
+  const vref = doc(collection(db, 'projects', projectId, 'versions'))
+  const batch = writeBatch(db)
+  batch.set(vref, {
+    label: label || '',
+    auto,
+    createdAt: Date.now(),
+    createdBy: user?.displayName || user?.email || 'User',
+    fileCount: data.length,
+  })
+  batch.set(doc(db, 'projects', projectId, 'versionFiles', vref.id), {
+    files: data,
+    folders: folders || [],
+  })
+  await batch.commit()
+  if (auto) await pruneAutoVersions(projectId).catch((e) => console.error('Prune failed:', e))
+  return vref.id
+}
+
+export async function listVersions(projectId) {
+  const q = query(collection(db, 'projects', projectId, 'versions'), orderBy('createdAt', 'desc'), limit(60))
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+export async function deleteVersion(projectId, versionId) {
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'projects', projectId, 'versions', versionId))
+  batch.delete(doc(db, 'projects', projectId, 'versionFiles', versionId))
+  await batch.commit()
+}
+
+// Auto versions 15 se zyada ho jaayein to sabse purane hata do (manual versions safe rehte hain)
+async function pruneAutoVersions(projectId) {
+  const all = await listVersions(projectId)
+  const autos = all.filter((v) => v.auto)
+  for (const v of autos.slice(MAX_AUTO_VERSIONS)) await deleteVersion(projectId, v.id)
+}
+
+// Version wapis lao: pehle abhi ka backup, phir files replace
+export async function restoreVersion(projectId, versionId, user) {
+  const snap = await getDoc(doc(db, 'projects', projectId, 'versionFiles', versionId))
+  if (!snap.exists()) throw new Error('VERSION_NOT_FOUND')
+  const target = snap.data()
+
+  const currentFiles = await getProjectFiles(projectId)
+  const projSnap = await getDoc(doc(db, 'projects', projectId))
+  const currentFolders = projSnap.data()?.folders || []
+  if (currentFiles.length > 0) {
+    await createVersion(projectId, user, currentFiles, currentFolders, 'Restore se pehle ka backup', true)
+  }
+
+  // purani files hata do, version ki files likh do (400-400 ke batch me)
+  const ops = []
+  const existing = await getDocs(collection(db, 'projects', projectId, 'files'))
+  existing.docs.forEach((d) => ops.push({ type: 'delete', ref: d.ref }))
+  for (const f of target.files || []) {
+    const path = (f.folder ? f.folder + '/' : '') + f.name
+    ops.push({
+      type: 'set',
+      ref: doc(db, 'projects', projectId, 'files', encodeURIComponent(path)),
+      data: { name: f.name, folder: f.folder || '', content: f.content || '', updatedAt: Date.now() },
+    })
+  }
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = writeBatch(db)
+    for (const op of ops.slice(i, i + 400)) {
+      if (op.type === 'delete') batch.delete(op.ref)
+      else batch.set(op.ref, op.data)
+    }
+    await batch.commit()
+  }
+  await updateDoc(doc(db, 'projects', projectId), {
+    folders: target.folders || [],
+    updatedAt: Date.now(),
+    lastEditedBy: user?.displayName || user?.email || 'User',
+  })
+  return { files: await getProjectFiles(projectId), folders: target.folders || [] }
 }
 
 // Project trash mein jaata hai — permanent delete NAHI hota
