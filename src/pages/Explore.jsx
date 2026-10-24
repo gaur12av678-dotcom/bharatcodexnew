@@ -15,7 +15,7 @@ export default function Explore() {
   useEffect(() => {
     const q = query(collection(db, 'projects'), where('public', '==', true))
     const unsub = onSnapshot(q, async (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => !p.trashed)
       list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       setProjects(list)
       setLoading(false)
