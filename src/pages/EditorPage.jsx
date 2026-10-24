@@ -7,14 +7,15 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import {
   getProjectFiles, saveFile, createFile, deleteFile, renameFile,
-  createFolder, deleteFolder, renameFolder,
+  createFolder, deleteFolder, renameFolder, createVersion,
 } from '../services/projectService'
 import Preview from '../components/Preview'
 import FileExplorer from '../components/FileExplorer'
+import VersionHistory from '../components/VersionHistory'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -41,13 +42,17 @@ export default function EditorPage() {
   const [minimap, setMinimap] = useState(false)
   const [showExplorer, setShowExplorer] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [editorKey, setEditorKey] = useState(0)
 
   const timerRef = useRef(null)
   const pendingRef = useRef(null)
   const editorRef = useRef(null)
+  const snapDoneRef = useRef(false) // is session ka auto-backup ban chuka hai?
 
   useEffect(() => {
     let cancelled = false
+    snapDoneRef.current = false
     const load = async () => {
       try {
         const snap = await getDoc(doc(db, 'projects', id))
@@ -107,8 +112,17 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handler)
   })
 
+  // Is session me pehli badlaav se PEHLE ka code auto-backup ho jaata hai (version history me dikhega)
+  const ensureSnapshot = (files) => {
+    if (snapDoneRef.current || readOnly || !project || !files || files.length === 0) return
+    snapDoneRef.current = true
+    createVersion(id, user, files, project.folders || [], 'Auto: edit se pehle ka code', true)
+      .catch((e) => console.error('Auto backup failed:', e))
+  }
+
   const onChange = (value) => {
     if (readOnly) return
+    ensureSnapshot(fileList)
     const content = value ?? ''
     setFileList((prev) => prev.map((f) => (pathOf(f) === active ? { ...f, content } : f)))
     const file = fileList.find((f) => pathOf(f) === active)
@@ -129,6 +143,7 @@ export default function EditorPage() {
       alert('Is naam ki file already hai.')
       return
     }
+    ensureSnapshot(fileList)
     await flushSave()
     await createFile(id, name, folder)
     const files = await getProjectFiles(id)
@@ -143,6 +158,7 @@ export default function EditorPage() {
   }
 
   const handleRenameFile = async (file, newName) => {
+    ensureSnapshot(fileList)
     await flushSave()
     await renameFile(id, file, newName)
     const files = await getProjectFiles(id)
@@ -153,6 +169,7 @@ export default function EditorPage() {
 
   const handleDeleteFile = async (file) => {
     if (!window.confirm(`"${pathOf(file)}" delete karna hai?`)) return
+    ensureSnapshot(fileList)
     await flushSave()
     await deleteFile(id, file)
     const files = await getProjectFiles(id)
@@ -164,6 +181,7 @@ export default function EditorPage() {
   }
 
   const handleRenameFolder = async (oldPath, newPath) => {
+    ensureSnapshot(fileList)
     await flushSave()
     await renameFolder(id, oldPath, newPath)
     const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
@@ -174,6 +192,7 @@ export default function EditorPage() {
 
   const handleDeleteFolder = async (path) => {
     if (!window.confirm(`Folder "${path}" aur uski saari files delete karni hain?`)) return
+    ensureSnapshot(fileList)
     await flushSave()
     await deleteFolder(id, path)
     const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
@@ -183,6 +202,18 @@ export default function EditorPage() {
       const first = files[0]
       setActive(first ? pathOf(first) : null)
     }
+  }
+
+  // Version restore hone ke baad editor ko naye data se bharo
+  const handleRestored = ({ files, folders }) => {
+    clearTimeout(timerRef.current)
+    pendingRef.current = null
+    snapDoneRef.current = true // restore ne khud backup bana diya
+    setFileList(files)
+    setProject((p) => ({ ...p, folders }))
+    setActive(files[0] ? pathOf(files[0]) : null)
+    setSaveState('saved')
+    setEditorKey((k) => k + 1)
   }
 
   const togglePublic = async () => {
@@ -280,6 +311,11 @@ export default function EditorPage() {
             <button type="button" onClick={downloadZip} title="Download ZIP" className={toolBtn}><Download size={15} /></button>
           </div>
         )}
+        <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} flex items-center gap-1 text-xs`}>
+          <History size={15} />
+          <span className="hidden sm:inline">History</span>
+        </button>
+
         <button type="button" onClick={shareProject} title="Share link copy karo" className={`${toolBtn} flex items-center gap-1 text-xs`}>
           <Share2 size={15} className={copied ? 'text-emerald-400' : ''} />
           {copied && <span className="text-emerald-400">Copied!</span>}
@@ -341,7 +377,7 @@ export default function EditorPage() {
             <div className="h-1/2 lg:h-auto lg:w-1/2 flex flex-col border-b lg:border-b-0 lg:border-r border-edge min-h-0">
               {activeFile ? (
                 <Editor
-                  key={active}
+                  key={active + ':' + editorKey}
                   path={active}
                   language={langOf(activeFile.name)}
                   theme={theme === 'light' ? 'light' : 'vs-dark'}
@@ -372,6 +408,18 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
+
+      {showHistory && (
+        <VersionHistory
+          projectId={id}
+          user={user}
+          files={fileList}
+          folders={project.folders || []}
+          onBeforeAction={flushSave}
+          onRestored={handleRestored}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }
