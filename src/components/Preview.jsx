@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2 } from 'lucide-react'
+import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink } from 'lucide-react'
 
 const escapeScript = (code = '') => code.replace(/<\/script/gi, '<\\/script')
 
@@ -109,6 +109,17 @@ export default function Preview({ type, files }) {
 
   const active = VIEWPORTS[vp]
 
+  // Preview ko naye tab me kholo. Project ka code sandboxed iframe me chalta hai,
+  // taaki wo is app ke login/data tak na pahunch sake.
+  const openInNewTab = () => {
+    const safe = srcDoc.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    const wrapper = `<!DOCTYPE html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BharatCodex Preview</title><style>html,body{margin:0;height:100%;background:#fff}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-modals allow-popups" srcdoc="${safe}"></iframe></body></html>`
+    const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
+    const tab = window.open(url, '_blank')
+    if (!tab) alert('Popup block ho gaya. Browser me popups allow karo.')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  }
+
   return (
     <div className="h-full min-h-0 flex flex-col bg-base text-body transition-colors duration-200">
       {/* Toolbar */}
@@ -131,6 +142,9 @@ export default function Preview({ type, files }) {
         </span>
         <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]) }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
           <RefreshCw size={15} />
+        </button>
+        <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
+          <ExternalLink size={15} />
         </button>
         <button type="button" onClick={() => setShowConsole((s) => !s)} title="Console"
           className={`p-1.5 rounded-md transition relative ${showConsole ? 'text-blue-400 bg-raise' : 'text-mute hover:text-body hover:bg-raise'}`}>
