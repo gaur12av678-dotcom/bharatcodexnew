@@ -90,17 +90,18 @@ body {
 const fileId = (file) => encodeURIComponent((file.folder ? file.folder + '/' : '') + file.name)
 const pathOf = (file) => (file.folder ? file.folder + '/' : '') + file.name
 
-const ref = await addDoc(collection(db, 'projects'), {
-  name, type,
-  ownerId: user.uid,
-  ownerName: user.displayName || user.email || 'User',
-  createdBy: user.displayName || user.email || 'User',
-  public: false,
-  trashed: false,
-  folders: type === 'react' ? ['src', 'src/components'] : [],
-  createdAt: Date.now(),
-  updatedAt: Date.now(),
-})
+export async function createProject(user, name, type) {
+  const ref = await addDoc(collection(db, 'projects'), {
+    name, type,
+    ownerId: user.uid,
+    ownerName: user.displayName || user.email || 'User',
+    createdBy: user.displayName || user.email || 'User',
+    public: false,
+    trashed: false,
+    folders: type === 'react' ? ['src', 'src/components'] : [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  })
 
   const templates = type === 'react' ? REACT_FILES : WEB_FILES
   const batch = writeBatch(db)
@@ -208,6 +209,15 @@ export async function deleteFolder(projectId, path) {
   const p = await getDoc(projRef)
   const folders = (p.data()?.folders || []).filter((f) => f !== path && !f.startsWith(path + '/'))
   await updateDoc(projRef, { folders })
+}
+
+// Permanent delete (Admin panel) — files subcollection pehle, phir project doc
+export async function deleteProject(projectId) {
+  const snap = await getDocs(collection(db, 'projects', projectId, 'files'))
+  const batch = writeBatch(db)
+  snap.docs.forEach((d) => batch.delete(d.ref))
+  await batch.commit()
+  await deleteDoc(doc(db, 'projects', projectId))
 }
 
 // Project trash mein jaata hai — permanent delete NAHI hota
