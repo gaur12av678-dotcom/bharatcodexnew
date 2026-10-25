@@ -27,7 +27,7 @@ const langOf = (name) => EXT_LANG[name.split('.').pop()?.toLowerCase()] || 'plai
 
 export default function EditorPage() {
   const { id } = useParams()
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, isTeam } = useAuth()
   const { theme } = useTheme()
 
   const [project, setProject] = useState(null)
@@ -64,7 +64,9 @@ export default function EditorPage() {
         if (cancelled) return
         setProject(data)
         setFileList(files)
-        setReadOnly(false)  // TEAM MODE: har signed-in member edit kar sakta hai
+        // Edit: admin, project ka owner, ya Team role (admin ke projects par). Baaki sirf dekh sakte hain.
+        const canEdit = isAdmin || (!!user && data.ownerId === user.uid) || (isTeam && data.ownerIsAdmin === true)
+        setReadOnly(!canEdit)
         setActive(files[0] ? (files[0].folder ? files[0].folder + '/' + files[0].name : files[0].name) : null)
       } catch (error) {
         console.error('Project load failed:', error)
@@ -75,7 +77,10 @@ export default function EditorPage() {
     }
     load()
     return () => { cancelled = true; clearTimeout(timerRef.current) }
-  }, [id, isAdmin, user])
+  }, [id, isAdmin, isTeam, user])
+
+  // Public/Private badalna sirf owner ya admin kar sakta hai
+  const canManage = !!project && (isAdmin || (!!user && project.ownerId === user.uid))
 
   const flushSave = async () => {
     clearTimeout(timerRef.current)
@@ -311,17 +316,19 @@ export default function EditorPage() {
             <button type="button" onClick={downloadZip} title="Download ZIP" className={toolBtn}><Download size={15} /></button>
           </div>
         )}
-        <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} flex items-center gap-1 text-xs`}>
-          <History size={15} />
-          <span className="hidden sm:inline">History</span>
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} flex items-center gap-1 text-xs`}>
+            <History size={15} />
+            <span className="hidden sm:inline">History</span>
+          </button>
+        )}
 
         <button type="button" onClick={shareProject} title="Share link copy karo" className={`${toolBtn} flex items-center gap-1 text-xs`}>
           <Share2 size={15} className={copied ? 'text-emerald-400' : ''} />
           {copied && <span className="text-emerald-400">Copied!</span>}
         </button>
 
-        {!readOnly && (
+        {canManage && (
           <button type="button" onClick={togglePublic} title={project.public ? 'Public — Explore me dikhta hai' : 'Private'} className={`${toolBtn} flex items-center gap-1 text-xs`}>
             {project.public ? <Globe size={15} className="text-emerald-400" /> : <Lock size={15} />}
             <span className="hidden sm:inline">{project.public ? 'Public' : 'Private'}</span>
