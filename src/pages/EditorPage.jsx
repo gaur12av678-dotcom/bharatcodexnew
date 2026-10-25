@@ -7,15 +7,16 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import {
   getProjectFiles, saveFile, createFile, deleteFile, renameFile,
-  createFolder, deleteFolder, renameFolder, createVersion,
+  createFolder, deleteFolder, renameFolder, createVersion, restoreVersion,
 } from '../services/projectService'
 import Preview from '../components/Preview'
 import FileExplorer from '../components/FileExplorer'
 import VersionHistory from '../components/VersionHistory'
+import SearchPanel from '../components/SearchPanel'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -44,11 +45,15 @@ export default function EditorPage() {
   const [copied, setCopied] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
+  const [sideTab, setSideTab] = useState('files') // 'files' ya 'search'
+  const [undoStack, setUndoStack] = useState([])   // [{ id, label }] — destructive kaam se pehle ke backups
+  const [undoBusy, setUndoBusy] = useState(false)
 
   const timerRef = useRef(null)
   const pendingRef = useRef(null)
   const editorRef = useRef(null)
   const snapDoneRef = useRef(false) // is session ka auto-backup ban chuka hai?
+  const revealRef = useRef(null)    // search result se file khulne ke baad kis line par jaana hai
 
   useEffect(() => {
     let cancelled = false
@@ -112,6 +117,11 @@ export default function EditorPage() {
         e.preventDefault()
         flushSave()
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setShowExplorer(true)
+        setSideTab('search')
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -123,6 +133,79 @@ export default function EditorPage() {
     snapDoneRef.current = true
     createVersion(id, user, files, project.folders || [], 'Auto: edit se pehle ka code', true)
       .catch((e) => console.error('Auto backup failed:', e))
+  }
+
+  // Badi tabdili (delete / rename / auto-fix) se PEHLE backup lo, taaki "Undo" se wapis aa sako
+  const snapshotForUndo = async (label) => {
+    if (readOnly || !project) return
+    try {
+      const vid = await createVersion(id, user, fileList, project.folders || [], 'Auto: ' + label + ' se pehle', true)
+      setUndoStack((prev) => [...prev.slice(-9), { id: vid, label }])
+    } catch (e) {
+      console.error('Undo backup failed:', e)
+    }
+  }
+
+  const undoLast = async () => {
+    const last = undoStack[undoStack.length - 1]
+    if (!last || undoBusy) return
+    setUndoBusy(true)
+    try {
+      await flushSave()
+      const res = await restoreVersion(id, last.id, user)
+      setUndoStack((prev) => prev.slice(0, -1))
+      handleRestored(res)
+    } catch (e) {
+      console.error('Undo failed:', e)
+      alert(e?.message === 'VERSION_NOT_FOUND' ? 'Ye backup ab nahi mila. History se purana version chuno.' : 'Undo nahi hua. History se try karo.')
+      setUndoStack((prev) => prev.slice(0, -1))
+    } finally {
+      setUndoBusy(false)
+    }
+  }
+
+  // Preview ke "Fix" buttons yahan se file badalte hain. Pehle backup, phir save, phir preview khud dobara chalta hai.
+  const applyEdits = async ({ edits = [], creates = [] }, label = 'Fix') => {
+    if (readOnly) return
+    await flushSave()
+    await snapshotForUndo(label)
+    for (const c of creates) {
+      const cut = c.path.lastIndexOf('/')
+      const folder = cut === -1 ? '' : c.path.slice(0, cut)
+      const name = cut === -1 ? c.path : c.path.slice(cut + 1)
+      if (folder) {
+        const parts = folder.split('/')
+        for (let i = 1; i <= parts.length; i++) {
+          const sub = parts.slice(0, i).join('/')
+          if (!(project.folders || []).includes(sub)) await createFolder(id, sub)
+        }
+      }
+      await saveFile(id, { name, folder }, c.content, user?.displayName || user?.email)
+    }
+    for (const e of edits) {
+      const file = fileList.find((f) => pathOf(f) === e.path)
+      if (!file) continue
+      await saveFile(id, file, e.content, user?.displayName || user?.email)
+    }
+    const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
+    setFileList(files)
+    setProject((p) => ({ ...p, folders: snap.data()?.folders || [] }))
+    pendingRef.current = null
+    setEditorKey((k) => k + 1) // editor ko naya code dikhao
+  }
+
+  // Search result / problem se file kholo aur us line par jao
+  const openAt = async (path, line = 1) => {
+    if (!fileList.some((f) => pathOf(f) === path)) return
+    revealRef.current = { line }
+    if (path === active) {
+      editorRef.current?.revealLineInCenter(line)
+      editorRef.current?.setPosition({ lineNumber: line, column: 1 })
+      editorRef.current?.focus()
+      revealRef.current = null
+      return
+    }
+    await switchFile(path)
   }
 
   const onChange = (value) => {
@@ -163,8 +246,8 @@ export default function EditorPage() {
   }
 
   const handleRenameFile = async (file, newName) => {
-    ensureSnapshot(fileList)
     await flushSave()
+    await snapshotForUndo('rename ' + pathOf(file))
     await renameFile(id, file, newName)
     const files = await getProjectFiles(id)
     setFileList(files)
@@ -174,8 +257,8 @@ export default function EditorPage() {
 
   const handleDeleteFile = async (file) => {
     if (!window.confirm(`"${pathOf(file)}" delete karna hai?`)) return
-    ensureSnapshot(fileList)
     await flushSave()
+    await snapshotForUndo('delete ' + pathOf(file))
     await deleteFile(id, file)
     const files = await getProjectFiles(id)
     setFileList(files)
@@ -186,8 +269,8 @@ export default function EditorPage() {
   }
 
   const handleRenameFolder = async (oldPath, newPath) => {
-    ensureSnapshot(fileList)
     await flushSave()
+    await snapshotForUndo('folder rename ' + oldPath)
     await renameFolder(id, oldPath, newPath)
     const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
     setFileList(files)
@@ -197,8 +280,8 @@ export default function EditorPage() {
 
   const handleDeleteFolder = async (path) => {
     if (!window.confirm(`Folder "${path}" aur uski saari files delete karni hain?`)) return
-    ensureSnapshot(fileList)
     await flushSave()
+    await snapshotForUndo('folder delete ' + path)
     await deleteFolder(id, path)
     const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
     setFileList(files)
@@ -317,6 +400,14 @@ export default function EditorPage() {
           </div>
         )}
         {!readOnly && (
+          <button type="button" onClick={undoLast} disabled={undoStack.length === 0 || undoBusy}
+            title={undoStack.length ? 'Undo: ' + undoStack[undoStack.length - 1].label : 'Undo (abhi kuch nahi)'}
+            className={`${toolBtn} flex items-center gap-1 text-xs disabled:opacity-40`}>
+            <Undo2 size={15} />
+            <span className="hidden sm:inline">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
+          </button>
+        )}
+        {!readOnly && (
           <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} flex items-center gap-1 text-xs`}>
             <History size={15} />
             <span className="hidden sm:inline">History</span>
@@ -345,22 +436,38 @@ export default function EditorPage() {
       </div>
 
       <div className="flex-1 flex min-h-0">
-        {/* File explorer */}
+        {/* File explorer / Search */}
         {showExplorer && (
-          <div className="w-56 shrink-0 hidden md:block min-h-0">
-            <FileExplorer
-              files={fileList}
-              folders={project.folders || []}
-              active={active}
-              readOnly={readOnly}
-              onSelect={switchFile}
-              onCreateFile={handleCreateFile}
-              onCreateFolder={handleCreateFolder}
-              onRenameFile={handleRenameFile}
-              onDeleteFile={handleDeleteFile}
-              onRenameFolder={handleRenameFolder}
-              onDeleteFolder={handleDeleteFolder}
-            />
+          <div className="w-56 shrink-0 hidden md:flex flex-col min-h-0">
+            <div className="flex shrink-0 bg-surface border-b border-r border-edge">
+              <button type="button" onClick={() => setSideTab('files')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'files' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
+                <Files size={13} /> Files
+              </button>
+              <button type="button" onClick={() => setSideTab('search')} title="Ctrl+Shift+F"
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'search' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
+                <Search size={13} /> Search
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              {sideTab === 'search' ? (
+                <SearchPanel files={fileList} onOpen={openAt} />
+              ) : (
+                <FileExplorer
+                  files={fileList}
+                  folders={project.folders || []}
+                  active={active}
+                  readOnly={readOnly}
+                  onSelect={switchFile}
+                  onCreateFile={handleCreateFile}
+                  onCreateFolder={handleCreateFolder}
+                  onRenameFile={handleRenameFile}
+                  onDeleteFile={handleDeleteFile}
+                  onRenameFolder={handleRenameFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                />
+              )}
+            </div>
           </div>
         )}
 
@@ -390,7 +497,18 @@ export default function EditorPage() {
                   theme={theme === 'light' ? 'light' : 'vs-dark'}
                   value={activeFile.content ?? ''}
                   onChange={onChange}
-                  onMount={(editor) => { editorRef.current = editor }}
+                  onMount={(editor) => {
+                    editorRef.current = editor
+                    if (revealRef.current) {
+                      const { line } = revealRef.current
+                      revealRef.current = null
+                      setTimeout(() => {
+                        editor.revealLineInCenter(line)
+                        editor.setPosition({ lineNumber: line, column: 1 })
+                        editor.focus()
+                      }, 50)
+                    }
+                  }}
                   options={{
                     minimap: { enabled: minimap },
                     fontSize,
@@ -410,7 +528,7 @@ export default function EditorPage() {
               )}
             </div>
             <div className="h-1/2 lg:h-auto lg:w-1/2 min-h-0">
-              <Preview type={project.type} files={filesObj} />
+              <Preview type={project.type} files={filesObj} readOnly={readOnly} onApplyEdits={applyEdits} onOpenFile={openAt} />
             </div>
           </div>
         </div>
