@@ -4,14 +4,32 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
 
-    function isAdmin() {
-      return signedIn()
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
+    function isAdmin() { return signedIn() && myRole() == 'admin'; }
+    function isTeam()  { return signedIn() && myRole() == 'team'; }
 
     function noAdminAssigned() {
       return !exists(/databases/$(database)/documents/meta/app)
         || get(/databases/$(database)/documents/meta/app).data.adminAssigned != true;
+    }
+
+    // ---- Project access (project ke path-id se, subcollections ke liye) ----
+    function projectOf(pid) {
+      return get(/databases/$(database)/documents/projects/$(pid)).data;
+    }
+    // Edit: admin, project ka owner, ya Team role (sirf admin ke projects par)
+    function canEditProject(pid) {
+      return signedIn() && (
+        isAdmin()
+        || projectOf(pid).get('ownerId', '') == request.auth.uid
+        || (isTeam() && projectOf(pid).get('ownerIsAdmin', false) == true)
+      );
+    }
+    // Read: edit karne wale + public projects
+    function canReadProject(pid) {
+      return canEditProject(pid) || projectOf(pid).get('public', false) == true;
     }
 
     match /users/{userId} {
@@ -27,23 +45,58 @@ service cloud.firestore {
       allow write: if noAdminAssigned() || isAdmin();
     }
 
-    // ===== TEAM MODE: BharatCodex team ke saare members =====
+    // Har user ke apne pinned projects
+    match /userPins/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ===== PROJECTS =====
+    //  Member : sirf apne projects
+    //  Team   : apne + admin ke projects (edit + save kar sakta hai)
+    //  Admin  : sab projects
+    //  Public projects: sab signed-in log dekh sakte hain (read-only)
     match /projects/{projectId} {
-      // Sab signed-in members: sab projects dekhen, create karein, edit karein, trash karein
-      allow read, create, update: if signedIn();
+      allow read: if signedIn() && (
+        isAdmin()
+        || resource.data.ownerId == request.auth.uid
+        || resource.data.public == true
+        || (isTeam() && resource.data.ownerIsAdmin == true)
+      );
+
+      // Naya project: owner khud ho, aur ownerIsAdmin sach ho (fake nahi kar sakte)
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.get('ownerIsAdmin', false) == isAdmin();
+
+      allow update: if signedIn()
+        && (isAdmin()
+            || resource.data.get('ownerId', '') == request.auth.uid
+            || (isTeam() && resource.data.get('ownerIsAdmin', false) == true))
+        // owner badal nahi sakte
+        && request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '')
+        // ownerIsAdmin sirf admin badal sakta hai
+        && (isAdmin()
+            || request.resource.data.get('ownerIsAdmin', false) == resource.data.get('ownerIsAdmin', false))
+        // trash / public sirf owner ya admin badal sakta hai (team nahi)
+        && (isAdmin()
+            || resource.data.get('ownerId', '') == request.auth.uid
+            || (request.resource.data.get('trashed', false) == resource.data.get('trashed', false)
+                && request.resource.data.get('public', false) == resource.data.get('public', false)));
+
       // Permanent delete sirf ADMIN kar sakta hai (Admin Panel se)
       allow delete: if isAdmin();
 
       match /files/{fileId} {
-        allow read, write: if signedIn();
+        allow read: if canReadProject(projectId);
+        allow write: if canEditProject(projectId);
       }
 
       // Version history (editor me "History" button)
       match /versions/{versionId} {
-        allow read, create, delete: if signedIn();
+        allow read, create, delete: if canEditProject(projectId);
       }
       match /versionFiles/{versionId} {
-        allow read, create, delete: if signedIn();
+        allow read, create, delete: if canEditProject(projectId);
       }
 
       match /likes/{uid} {
