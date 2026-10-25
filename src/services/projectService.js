@@ -3,6 +3,7 @@ import {
   query, orderBy, limit,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
+import { analyzeProject } from '../utils/projectAnalyzer.js'
 
 const WEB_FILES = {
   'index.html': `<!-- BharatCodex Web Project -->\n<h1>Hello BharatCodex!</h1>\n<p>Code likho, side me preview dekho.</p>\n<button id="btn">Click me</button>\n`,
@@ -121,7 +122,7 @@ export async function createProject(user, name, type, isAdmin = false) {
 
 // ZIP / files se naya project banao (Import feature)
 const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache)(\/|$)/i
-const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|svg|woff2?|ttf|otf|eot|mp3|mp4|webm|mov|pdf|zip|rar|7z|exe|dll|so|bin|lock)$/i
+const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|woff2?|ttf|otf|eot|mp3|mp4|webm|mov|pdf|zip|rar|7z|exe|dll|so|bin|lock)$/i  // svg ab text ki tarah import hota hai (icons toot-te the)
 const MAX_FILE = 900000 // Firestore doc limit ~1MB
 
 export async function importProject(user, name, entries, isAdmin = false) {
@@ -134,8 +135,9 @@ export async function importProject(user, name, entries, isAdmin = false) {
     list = list.map((e) => ({ ...e, path: e.path.split('/').slice(1).join('/') }))
   }
   if (list.length > 400) list = list.slice(0, 400)
-  const isReact = list.some((e) => /\.jsx$/i.test(e.path)) ||
-    list.some((e) => e.path === 'package.json' && /"react"/.test(e.content))
+  // Project ka type files se samjho (package.json, entry file, .jsx/.tsx) — React ko simple HTML na samjho
+  const analysis = analyzeProject(Object.fromEntries(list.map((e) => [e.path, e.content])))
+  const isReact = analysis.type === 'react'
   const folderSet = new Set()
   for (const e of list) {
     const parts = e.path.split('/').slice(0, -1)
