@@ -1,9 +1,36 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink } from 'lucide-react'
+import { Component, Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink, Loader2, CheckCircle2 } from 'lucide-react'
+import { useTheme } from '../context/ThemeContext'
+import { analyzeProject, scanProject, buildCheck, makePreviewFiles } from '../utils/projectAnalyzer.js'
+import { applyFixes, explainRuntimeError, addDependencyEdits, removeDependencyEdits } from '../utils/errorFixer.js'
+import { ProblemsTab, BuildTab, PackagesTab } from './DevPanels'
+
+// React/Vite runtime (Sandpack) — zaroorat padne par hi load hota hai
+const Shell = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Shell })))
+const SpPreview = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.PreviewPane })))
+const SpConsole = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.ConsolePane })))
+const SpBridge = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Bridge })))
+
+class PreviewBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center gap-2 p-4 text-center bg-base text-body">
+          <p className="font-semibold text-red-400">Preview engine load nahi hua</p>
+          <p className="text-xs text-mute break-words max-w-md">{String(this.state.error?.message || this.state.error)}</p>
+          <p className="text-xs text-faint">Check karo ki "npm install" ke baad @codesandbox/sandpack-react install hua hai aur internet chal raha hai.</p>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const escapeScript = (code = '') => code.replace(/<\/script/gi, '<\\/script')
 
-// Console capture — user code ke logs parent ko bhejta hai
+// Console capture — user code ke logs parent ko bhejta hai (sirf simple HTML projects ke liye)
 const CONSOLE_HOOK = `<script>
 (function () {
   var send = function (level, args) {
@@ -22,48 +49,15 @@ const CONSOLE_HOOK = `<script>
 })()
 <\/script>`
 
-// Multi-file support: saari CSS + JS merge, index.html / App.jsx kahi bhi ho
 const pick = (files, regex) => Object.keys(files).filter((k) => regex.test(k)).sort()
 const findOne = (files, regex) => pick(files, regex)[0]
 
-const buildReactSrcDoc = (files) => {
-  const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
-  const jsx = pick(files, /\.jsx$/i)
-    .filter((k) => !/(^|\/)main\.jsx$/i.test(k))   // main.jsx render khud karta hai — skip
-    .map((k) => escapeScript(stripImports(files[k])))
-    .join('\n\n')
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"><\/script>
-<style>${css}</style>
-</head>
-<body>
-<div id="root"></div>
-${CONSOLE_HOOK}
-<script type="text/babel" data-presets="react">
-${jsx}
-const __root = ReactDOM.createRoot(document.getElementById('root'));
-__root.render(<App />);
-<\/script>
-</body>
-</html>`
-}
-// Import/export lines hata do — saari jsx files ek saath compile hoti hain
-const stripImports = (code) => code
-  .replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
-  .replace(/export\s+default\s+/g, '')
 // Plain HTML/CSS/JS project — index.html ke andar saari CSS + JS inline merge
 const buildWebSrcDoc = (files) => {
   const htmlKey = findOne(files, /(^|\/)index\.html?$/i) || findOne(files, /\.html?$/i)
   const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
   const js = pick(files, /\.m?js$/i).map((k) => escapeScript(files[k])).join('\n;\n')
   let html = htmlKey ? files[htmlKey] : '<!-- index.html nahi mila -->'
-  // local <link rel="stylesheet"> aur <script src> hata do (inline merge ho rahe hain)
   html = html
     .replace(/<link[^>]+rel=["']?stylesheet["']?[^>]*href=["'](?!https?:|\/\/)[^"']+["'][^>]*>/gi, '')
     .replace(/<link[^>]+href=["'](?!https?:|\/\/)[^"']+\.css["'][^>]*>/gi, '')
@@ -82,50 +76,171 @@ const VIEWPORTS = {
   desktop: { width: '100%', icon: Monitor },
 }
 
-const LOG_COLORS = {
-  log: 'text-mute', info: 'text-blue-400', warn: 'text-yellow-400', error: 'text-red-400',
+const LOG_COLORS = { log: 'text-mute', info: 'text-blue-400', warn: 'text-yellow-400', error: 'text-red-400' }
+
+const STATUS_TEXT = {
+  initial: 'Start ho raha hai...',
+  running: 'Packages install / build ho raha hai...',
+  idle: 'Ready',
+  done: 'Ready',
+  timeout: 'Timeout — Reload dabao',
 }
 
-export default function Preview({ type, files }) {
+const nowStr = () => new Date().toLocaleTimeString('en-IN', { hour12: false })
+
+export default function Preview({ type, files, readOnly = false, onApplyEdits, onOpenFile }) {
+  const { theme } = useTheme()
   const [vp, setVp] = useState('desktop')
   const [reloadKey, setReloadKey] = useState(0)
   const [logs, setLogs] = useState([])
-  const [showConsole, setShowConsole] = useState(true)
+  const [showPanel, setShowPanel] = useState(true)
+  const [tab, setTab] = useState('console')
+  const [spStatus, setSpStatus] = useState('initial')
+  const [runtimeError, setRuntimeError] = useState(null)
+  const [buildLog, setBuildLog] = useState([])
+  const [fixing, setFixing] = useState(false)
+  const [fixedAt, setFixedAt] = useState(0)
 
-  const srcDoc = useMemo(
-    () => (type === 'react' ? buildReactSrcDoc(files) : buildWebSrcDoc(files)),
-    [type, files]
-  )
+  // Bhaari scanning typing ke saath-saath nahi, thodi der baad
+  const deferred = useDeferredValue(files)
+  const analysis = useMemo(() => analyzeProject(deferred), [deferred])
+  const issues = useMemo(() => scanProject(deferred, analysis), [deferred, analysis])
+  const build = useMemo(() => buildCheck(deferred, analysis, issues), [deferred, analysis, issues])
 
-  // iframe se aaye logs suno
+  // React project ko kabhi simple HTML preview me nahi chalana
+  const runtime = type === 'react' || analysis.runtime === 'sandpack' ? 'sandpack' : 'static'
+  const effectiveAnalysis = useMemo(() => (runtime === 'sandpack' && analysis.runtime !== 'sandpack' ? { ...analysis, runtime: 'sandpack', usesReact: true } : analysis), [runtime, analysis])
+  const preview = useMemo(() => (runtime === 'sandpack' ? makePreviewFiles(deferred, effectiveAnalysis) : null), [runtime, deferred, effectiveAnalysis])
+
+  const spFiles = useMemo(() => {
+    if (!preview) return null
+    const out = {}
+    for (const [p, c] of Object.entries(preview.files)) out[p.startsWith('/') ? p : '/' + p] = c
+    return out
+  }, [preview])
+
+  const srcDoc = useMemo(() => (runtime === 'static' ? buildWebSrcDoc(deferred) : ''), [runtime, deferred])
+
+  const addBuildLog = useCallback((text) => {
+    setBuildLog((prev) => [...prev.slice(-39), nowStr() + '  ' + text])
+  }, [])
+
+  // iframe (simple HTML) se aaye logs suno
   useEffect(() => {
     const handler = (event) => {
       const data = event.data
       if (!data || !data.__bc) return
       setLogs((prev) => [...prev.slice(-199), { level: data.level, text: data.text }])
+      if (data.level === 'error') {
+        const m = /\(line (\d+)\)\s*$/.exec(data.text)
+        setRuntimeError({ message: data.text.replace(/\s*\(line \d+\)\s*$/, ''), line: m ? Number(m[1]) : null })
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [])
 
-  const active = VIEWPORTS[vp]
+  useEffect(() => { setRuntimeError(null); setLogs([]) }, [runtime, reloadKey])
 
-  // Preview ko naye tab me kholo. Project ka code sandboxed iframe me chalta hai,
-  // taaki wo is app ke login/data tak na pahunch sake.
+  // Preview se aaya error ko simple bhasha me badlo
+  const runtimeIssue = useMemo(() => {
+    if (!runtimeError) return null
+    const ex = explainRuntimeError(runtimeError, files)
+    const dup = issues.some((i) => i.fix && ex.fix && i.fix.kind === ex.fix.kind && i.fix.name === ex.fix.name && i.path === ex.path)
+    if (dup) return null
+    return { id: 'rt', level: 'error', path: ex.path, line: ex.line, title: ex.title, why: ex.why, fix: ex.fix }
+  }, [runtimeError, issues, files])
+
+  const problems = useMemo(() => (runtimeIssue ? [runtimeIssue, ...issues] : issues), [runtimeIssue, issues])
+  const errorCount = problems.filter((p) => p.level === 'error').length
+  const buildErrors = build.filter((b) => b.level === 'error').length
+
+  const openFile = (path, line) => { if (onOpenFile && path) onOpenFile(path, line || 1) }
+
+  const runEdits = async (changes, label) => {
+    if (!onApplyEdits || readOnly) return
+    if (!changes.edits.length && !changes.creates.length) return
+    setFixing(true)
+    try {
+      await onApplyEdits(changes, label)
+      setRuntimeError(null)
+      setFixedAt(Date.now())
+      addBuildLog('fix laga: ' + label)
+    } catch (e) {
+      console.error('Fix failed:', e)
+      alert('Fix save nahi hua. Dobara try karo.')
+    } finally {
+      setFixing(false)
+    }
+  }
+
+  const doFix = (list) => runEdits(applyFixes(list, files), list.length > 1 ? `${list.length} problems fix` : list[0].title)
+  const addPackage = (name, version) => runEdits(addDependencyEdits(files, name, version), name + ' package jodna')
+  const removePackage = (name) => runEdits(removeDependencyEdits(files, name), name + ' package hatana')
+  const addAllMissing = () => doFix(issues.filter((i) => i.kind === 'missing-dep'))
+  const createPackage = () => runEdits({ edits: [], creates: [{ path: 'package.json', content: makePreviewFiles(files, analysis).files['package.json'] }] }, 'package.json banana')
+
+  const spReady = runtime !== 'sandpack' || spStatus === 'done' || spStatus === 'idle'
+  const clean = errorCount === 0
+  const banner = fixedAt ? (
+    <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${clean && spReady ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' : 'border-yellow-500/40 text-yellow-400 bg-yellow-500/10'}`}>
+      {clean && spReady ? <CheckCircle2 size={13} /> : <Loader2 size={13} className="animate-spin" />}
+      {clean && spReady ? 'Fix ke baad preview dobara test hua — koi error nahi.' : 'Fix lag gaya, preview dobara test ho raha hai...'}
+      <div className="flex-1" />
+      <button type="button" onClick={() => setFixedAt(0)} className="text-faint hover:text-body">✕</button>
+    </div>
+  ) : null
+
+  const active = VIEWPORTS[vp]
+  const shortRuntime = runtime === 'sandpack' ? analysis.kind + ' · live bundler' : 'HTML / CSS / JS'
+  const statusLine = runtime === 'sandpack' ? STATUS_TEXT[spStatus] || spStatus : 'Ready'
+
+  // Preview ko naye tab me kholo (sirf simple HTML projects ke liye). React ke liye "Reload" use karo.
   const openInNewTab = () => {
+    if (runtime !== 'static') { alert('React/Vite preview naye tab me nahi khulta. Production ke liye hosting par deploy karo.'); return }
     const safe = srcDoc.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
     const wrapper = `<!DOCTYPE html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BharatCodex Preview</title><style>html,body{margin:0;height:100%;background:#fff}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-modals allow-popups" srcdoc="${safe}"></iframe></body></html>`
     const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
-    const tab = window.open(url, '_blank')
-    if (!tab) alert('Popup block ho gaya. Browser me popups allow karo.')
+    const w = window.open(url, '_blank')
+    if (!w) alert('Popup block ho gaya. Browser me popups allow karo.')
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   }
 
-  return (
+  const tabBtn = (key, label, badge, badgeCls = 'bg-red-500') => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => setTab(key)}
+      className={`px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider border-b-2 transition ${tab === key ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}
+    >
+      {label}
+      {badge > 0 && <span className={`ml-1.5 inline-block min-w-[16px] px-1 rounded-full text-[10px] text-white text-center ${badgeCls}`}>{badge}</span>}
+    </button>
+  )
+
+  const staticConsole = (
+    <div className="h-full overflow-y-auto px-3 py-1.5 font-mono text-[11px] leading-relaxed">
+      {logs.length === 0 ? (
+        <p className="text-faint">console.log() yahan dikhega...</p>
+      ) : (
+        logs.map((log, i) => (
+          <div key={i} className={`${LOG_COLORS[log.level] || 'text-mute'} whitespace-pre-wrap break-all`}>
+            {log.level === 'warn' && '⚠ '}{log.level === 'error' && '✖ '}{log.text}
+          </div>
+        ))
+      )}
+    </div>
+  )
+
+  const body = (
     <div className="h-full min-h-0 flex flex-col bg-base text-body transition-colors duration-200">
       {/* Toolbar */}
       <div className="min-h-10 shrink-0 flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-edge bg-surface">
         <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Live Preview</span>
+        <span className="text-[10px] font-semibold text-blue-300 bg-blue-500/10 rounded px-1.5 py-0.5" title="Is project ko kaise chalaya ja raha hai">{shortRuntime}</span>
+        <span className={`flex items-center gap-1 text-[10px] ${spReady ? 'text-emerald-400' : 'text-yellow-400'}`}>
+          {!spReady && <Loader2 size={11} className="animate-spin" />}{statusLine}
+        </span>
         <div className="flex-1" />
         <div className="flex items-center gap-1 bg-raise rounded-lg p-1 border border-edge">
           {Object.entries(VIEWPORTS).map(([key, viewport]) => {
@@ -141,16 +256,16 @@ export default function Preview({ type, files }) {
         <span className="text-[11px] font-mono text-faint bg-raise border border-edge rounded-md px-2 py-1">
           {active.width === '100%' ? 'Full' : `${active.width}px`}
         </span>
-        <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]) }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
+        <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]); setSpStatus('initial') }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
           <RefreshCw size={15} />
         </button>
         <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
           <ExternalLink size={15} />
         </button>
-        <button type="button" onClick={() => setShowConsole((s) => !s)} title="Console"
-          className={`p-1.5 rounded-md transition relative ${showConsole ? 'text-blue-400 bg-raise' : 'text-mute hover:text-body hover:bg-raise'}`}>
+        <button type="button" onClick={() => setShowPanel((s) => !s)} title="Console / Problems"
+          className={`p-1.5 rounded-md transition relative ${showPanel ? 'text-blue-400 bg-raise' : 'text-mute hover:text-body hover:bg-raise'}`}>
           <Terminal size={15} />
-          {logs.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />}
+          {errorCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />}
         </button>
       </div>
 
@@ -158,37 +273,68 @@ export default function Preview({ type, files }) {
       <div className="flex-1 min-h-0 overflow-auto p-3 flex justify-center bg-base">
         <div className="bg-white rounded-xl overflow-hidden shadow-2xl ring-1 ring-edge transition-[width] duration-300 shrink-0"
           style={{ width: active.width === '100%' ? '100%' : `${active.width}px`, maxWidth: '100%', height: '100%', minHeight: '200px' }}>
-          <iframe key={reloadKey} title="Project live preview" sandbox="allow-scripts" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
+          {runtime === 'sandpack' ? (
+            <SpPreview />
+          ) : (
+            <iframe key={reloadKey} title="Project live preview" sandbox="allow-scripts" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
+          )}
         </div>
       </div>
 
-      {/* Console panel */}
-      {showConsole && (
-        <div className="h-36 shrink-0 flex flex-col border-t border-edge bg-surface">
-          <div className="flex items-center justify-between px-3 py-1 border-b border-edge">
-            <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Console</span>
-            <div className="flex items-center gap-1">
-              <button type="button" onClick={() => navigator.clipboard?.writeText(logs.map((l) => '[' + l.level + '] ' + l.text).join('\n'))} title="Console copy karo" className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-faint hover:text-body hover:bg-raise">
-                Copy
-              </button>
-              <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body">
-                <Trash2 size={13} />
-              </button>
-            </div>
+      {/* Bottom panel */}
+      {showPanel && (
+        <div className="h-60 shrink-0 flex flex-col border-t border-edge bg-surface min-h-0">
+          <div className="flex items-center gap-1 px-2 border-b border-edge shrink-0">
+            {tabBtn('console', 'Console', 0)}
+            {tabBtn('problems', 'Problems', problems.length, errorCount ? 'bg-red-500' : 'bg-yellow-500')}
+            {tabBtn('build', 'Build', buildErrors)}
+            {tabBtn('packages', 'Packages', 0)}
+            <div className="flex-1" />
+            {tab === 'console' && (
+              <>
+                <button type="button" onClick={() => navigator.clipboard?.writeText(logs.map((l) => '[' + l.level + '] ' + l.text).join('\n'))} className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-faint hover:text-body hover:bg-raise">Copy</button>
+                <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body"><Trash2 size={13} /></button>
+              </>
+            )}
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-1.5 font-mono text-[11px] leading-relaxed">
-            {logs.length === 0 ? (
-              <p className="text-faint">console.log() yahan dikhega...</p>
-            ) : (
-              logs.map((log, i) => (
-                <div key={i} className={`${LOG_COLORS[log.level] || 'text-mute'} whitespace-pre-wrap break-all`}>
-                  {log.level === 'warn' && '⚠ '}{log.level === 'error' && '✖ '}{log.text}
-                </div>
-              ))
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {/* Console hamesha mount rehta hai taaki logs na khoyein */}
+            <div className={tab === 'console' ? 'h-full' : 'hidden'}>
+              {runtime === 'sandpack' ? <SpConsole /> : staticConsole}
+            </div>
+            {tab === 'problems' && (
+              <ProblemsTab issues={problems} readOnly={readOnly || !onApplyEdits} fixing={fixing} banner={banner} onFix={doFix} onOpen={openFile} />
+            )}
+            {tab === 'build' && <BuildTab items={build} log={buildLog} onOpen={openFile} />}
+            {tab === 'packages' && (
+              <PackagesTab
+                analysis={analysis}
+                issues={issues}
+                readOnly={readOnly || !onApplyEdits}
+                busy={fixing}
+                notes={preview?.notes}
+                onAdd={addPackage}
+                onRemove={removePackage}
+                onAddAllMissing={addAllMissing}
+                onCreatePackage={createPackage}
+              />
             )}
           </div>
         </div>
       )}
+      {runtime === 'sandpack' && <SpBridge onStatus={setSpStatus} onError={setRuntimeError} onLog={addBuildLog} />}
     </div>
+  )
+
+  if (runtime === 'static') return body
+
+  return (
+    <PreviewBoundary>
+      <Suspense fallback={<div className="h-full flex items-center justify-center bg-base text-faint text-sm gap-2"><Loader2 size={16} className="animate-spin" /> Preview engine load ho raha hai...</div>}>
+        <Shell key={reloadKey + ':' + preview.depsKey} files={spFiles} theme={theme === 'light' ? 'light' : 'dark'}>
+          {body}
+        </Shell>
+      </Suspense>
+    </PreviewBoundary>
   )
 }
