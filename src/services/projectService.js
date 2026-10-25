@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, deleteField,
+  collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, arrayUnion, arrayRemove, deleteField,
   query, orderBy, limit,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
@@ -91,12 +91,13 @@ body {
 const fileId = (file) => encodeURIComponent((file.folder ? file.folder + '/' : '') + file.name)
 const pathOf = (file) => (file.folder ? file.folder + '/' : '') + file.name
 
-export async function createProject(user, name, type) {
+export async function createProject(user, name, type, isAdmin = false) {
   const ref = await addDoc(collection(db, 'projects'), {
     name, type,
     ownerId: user.uid,
     ownerName: user.displayName || user.email || 'User',
     createdBy: user.displayName || user.email || 'User',
+    ownerIsAdmin: !!isAdmin, // true => Team role wale members ko ye project dikhega
     public: false,
     trashed: false,
     folders: type === 'react' ? ['src', 'src/components'] : [],
@@ -123,7 +124,7 @@ const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache)(\/|$)/i
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|svg|woff2?|ttf|otf|eot|mp3|mp4|webm|mov|pdf|zip|rar|7z|exe|dll|so|bin|lock)$/i
 const MAX_FILE = 900000 // Firestore doc limit ~1MB
 
-export async function importProject(user, name, entries) {
+export async function importProject(user, name, entries, isAdmin = false) {
   // entries: [{ path, content }]
   let list = entries.filter((e) => e.path && !SKIP.test(e.path) && !BINARY.test(e.path) && typeof e.content === 'string' && e.content.length <= MAX_FILE)
   if (list.length === 0) throw new Error('NO_FILES')
@@ -145,6 +146,7 @@ export async function importProject(user, name, entries) {
   const ref = await addDoc(collection(db, 'projects'), {
     name, type: isReact ? 'react' : 'web',
     ownerId: user.uid, ownerName: who, createdBy: who,
+    ownerIsAdmin: !!isAdmin,
     public: false, trashed: false,
     folders: [...folderSet].sort(),
     createdAt: Date.now(), updatedAt: Date.now(),
@@ -260,11 +262,38 @@ export async function deleteFolder(projectId, path) {
 
 // Permanent delete (Admin panel) — files subcollection pehle, phir project doc
 export async function deleteProject(projectId) {
-  const snap = await getDocs(collection(db, 'projects', projectId, 'files'))
-  const batch = writeBatch(db)
-  snap.docs.forEach((d) => batch.delete(d.ref))
-  await batch.commit()
+  // files + version history dono saaf karo, phir project doc
+  const refs = []
+  for (const sub of ['files', 'versions', 'versionFiles']) {
+    const snap = await getDocs(collection(db, 'projects', projectId, sub))
+    snap.docs.forEach((d) => refs.push(d.ref))
+  }
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db)
+    refs.slice(i, i + 400).forEach((r) => batch.delete(r))
+    await batch.commit()
+  }
   await deleteDoc(doc(db, 'projects', projectId))
+}
+
+// =====================================================================
+// PIN — har user apne pinned projects alag rakhta hai (userPins/{uid})
+// =====================================================================
+export async function pinProject(uid, projectId) {
+  await setDoc(doc(db, 'userPins', uid), { ids: arrayUnion(projectId) }, { merge: true })
+}
+
+export async function unpinProject(uid, projectId) {
+  await setDoc(doc(db, 'userPins', uid), { ids: arrayRemove(projectId) }, { merge: true })
+}
+
+// Admin ke purane projects ko "Team role ko dikhao" mark karo (ek baar, automatic)
+export async function markAdminProjects(projectIds) {
+  for (let i = 0; i < projectIds.length; i += 400) {
+    const batch = writeBatch(db)
+    projectIds.slice(i, i + 400).forEach((pid) => batch.update(doc(db, 'projects', pid), { ownerIsAdmin: true }))
+    await batch.commit()
+  }
 }
 
 
