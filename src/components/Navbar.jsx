@@ -4,7 +4,7 @@ import { useTheme } from '../context/ThemeContext'
 import { Code2, LogOut, ShieldCheck, Sun, Moon, Compass } from 'lucide-react'
 
 export default function Navbar() {
-  const { profile, isAdmin, logout } = useAuth()
+  const { profile, isAdmin, isTeam, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
@@ -71,8 +71,8 @@ export default function Navbar() {
             <p className="text-sm text-body font-medium max-w-32 truncate">
               {profile?.name || 'User'}
             </p>
-            <p className={`text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'text-amber-400' : 'text-faint'}`}>
-              {isAdmin ? 'Admin' : 'Member'}
+            <p className={`text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'text-amber-400' : isTeam ? 'text-cyan-400' : 'text-faint'}`}>
+              {isAdmin ? 'Admin' : isTeam ? 'Team' : 'Member'}
             </p>
           </div>
           <button
