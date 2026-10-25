@@ -77,6 +77,7 @@ export const AuthProvider = ({ children }) => {
         profile,
         loading,
         isAdmin: profile?.role === 'admin',
+        isTeam: profile?.role === 'team',
         signInWithGoogle,
         logout,
       }}
