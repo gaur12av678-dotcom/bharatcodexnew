@@ -105,7 +105,11 @@ export default function AdminPanel() {
       return
     }
 
-    if (!['admin', 'member'].includes(role)) {
+    if (!['admin', 'team', 'member'].includes(role)) {
+      return
+    }
+
+    if (role === 'admin' && !window.confirm(`${user.name || 'Is user'} ko ADMIN banana hai? Isse poora access mil jaayega.`)) {
       return
     }
 
@@ -237,40 +241,27 @@ export default function AdminPanel() {
                     {timeAgo(user.createdAt)}
                   </span>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      changeRole(
-                        user,
-                        user.role === 'admin' ? 'member' : 'admin'
-                      )
-                    }
-                    disabled={
-                      user.uid === profile?.uid &&
-                      user.role === 'admin'
-                    }
+                  <select
+                    value={user.role || 'member'}
+                    onChange={(e) => changeRole(user, e.target.value)}
+                    disabled={user.uid === profile?.uid}
                     title={
-                      user.uid === profile?.uid &&
-                      user.role === 'admin'
-                        ? 'Apna admin role yahan se remove nahi kar sakte'
-                        : user.role === 'admin'
-                          ? 'Change to Member'
-                          : 'Make Admin'
+                      user.uid === profile?.uid
+                        ? 'Apna role yahan se change nahi kar sakte'
+                        : 'Role chuno: Member (sirf apne projects), Team (apne + admin ke projects), Admin (sab kuch)'
                     }
-                    className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition shrink-0 disabled:opacity-70 ${
+                    className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border border-edge shrink-0 disabled:opacity-70 focus:outline-none focus:border-blue-500 ${
                       user.role === 'admin'
-                        ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
-                        : 'text-mute bg-raise hover:bg-edge'
+                        ? 'text-amber-300 bg-amber-500/10'
+                        : user.role === 'team'
+                          ? 'text-cyan-300 bg-cyan-500/10'
+                          : 'text-mute bg-raise'
                     }`}
                   >
-                    {user.role === 'admin' ? (
-                      <ShieldCheck size={13} />
-                    ) : (
-                      <Shield size={13} />
-                    )}
-
-                    {user.role === 'admin' ? 'Admin' : 'Make Admin'}
-                  </button>
+                    <option value="member">Member</option>
+                    <option value="team">Team</option>
+                    <option value="admin">Admin</option>
+                  </select>
                 </div>
               ))
             )}
@@ -328,4 +319,3 @@ export default function AdminPanel() {
     </div>
   )
 }
-
