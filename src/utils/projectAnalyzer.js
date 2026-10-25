@@ -389,44 +389,64 @@ export function buildCheck(files, analysis = analyzeProject(files), issues = sca
 }
 
 // ---------- Preview ke liye files taiyaar karo ----------
-// Missing zaroori files bana deta hai aur vite version ko preview-safe karta hai (aapki asli files nahi badalti)
-export function makePreviewFiles(files, analysis = analyzeProject(files)) {
-  const out = { ...files }
-  const notes = []
-  let pkg = analysis.pkg ? JSON.parse(JSON.stringify(analysis.pkg)) : null
-  if (!pkg) {
-    pkg = { name: 'preview-app', private: true, version: '0.0.0', type: 'module', scripts: { dev: 'vite', build: 'vite build' }, dependencies: {}, devDependencies: {} }
-    notes.push('package.json nahi mila, preview ke liye temporary bana diya.')
-  }
-  pkg.type = pkg.type || 'module'
-  pkg.scripts = { ...(pkg.scripts || {}), dev: 'vite' }
-  pkg.dependencies = pkg.dependencies || {}
-  pkg.devDependencies = pkg.devDependencies || {}
-  const need = (name, ver, bucket) => {
-    if (!pkg.dependencies[name] && !pkg.devDependencies[name]) { pkg[bucket][name] = ver; notes.push(name + ' temporary add kiya (preview ke liye).') }
-  }
-  if (analysis.usesReact) { need('react', KNOWN_VERSIONS.react, 'dependencies'); need('react-dom', KNOWN_VERSIONS['react-dom'], 'dependencies') }
-  need('vite', KNOWN_VERSIONS.vite, 'devDependencies')
-  if (analysis.usesReact) need('@vitejs/plugin-react', KNOWN_VERSIONS['@vitejs/plugin-react'], 'devDependencies')
-  // Preview runtime vite 5 tak stable hai
-  for (const bucket of ['dependencies', 'devDependencies']) {
-    const v = pkg[bucket].vite
-    if (v && parseInt(String(v).replace(/[^\d]/g, '').slice(0, 2), 10) >= 6) { pkg[bucket].vite = KNOWN_VERSIONS.vite }
-    const pr = pkg[bucket]['@vitejs/plugin-react']
-    if (pr && parseInt(String(pr).replace(/[^\d]/g, '').slice(0, 1), 10) >= 5) { pkg[bucket]['@vitejs/plugin-react'] = KNOWN_VERSIONS['@vitejs/plugin-react'] }
-  }
-  out['package.json'] = JSON.stringify(pkg, null, 2)
+// Preview "classic" Sandpack bundler par chalta hai (Vite nahi). Aapki asli files nahi badalti — sirf preview ki copy banati hai.
+const TOOLING = /^(vite|@vitejs\/|tailwindcss|postcss|autoprefixer|eslint|@types\/|typescript|prettier|wrangler)/
 
-  const hasConfig = Object.keys(out).some((p) => /^vite\.config\.(js|ts|mjs)$/.test(p))
-  if (!hasConfig) {
-    out['vite.config.js'] = analysis.usesReact
-      ? "import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()] })\n"
-      : "import { defineConfig } from 'vite'\nexport default defineConfig({})\n"
-    notes.push('vite.config nahi mila, preview ke liye default bana diya.')
+// Naya package.json (jab project me nahi hai) — Packages tab ka "package.json banao" isse banata hai
+export function buildDefaultPackage(files, analysis = analyzeProject(files)) {
+  const pkg = {
+    name: 'my-app', private: true, version: '0.1.0', type: 'module',
+    scripts: { dev: 'vite', build: 'vite build', preview: 'vite preview' },
+    dependencies: {}, devDependencies: {},
   }
-  if (!out['index.html'] && analysis.entry) {
-    out['index.html'] = `<!DOCTYPE html>\n<html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body><div id="root"></div><script type="module" src="/${analysis.entry}"></script></body></html>\n`
-    notes.push('index.html nahi mili, preview ke liye bana di.')
+  if (analysis.usesReact) {
+    pkg.dependencies.react = KNOWN_VERSIONS.react
+    pkg.dependencies['react-dom'] = KNOWN_VERSIONS['react-dom']
+    pkg.devDependencies['@vitejs/plugin-react'] = KNOWN_VERSIONS['@vitejs/plugin-react']
   }
-  return { files: out, notes, depsKey: JSON.stringify([pkg.dependencies, pkg.devDependencies]) }
+  pkg.devDependencies.vite = KNOWN_VERSIONS.vite
+  return JSON.stringify(pkg, null, 2) + '\n'
+}
+
+const META_ENV = "({ MODE: 'development', DEV: true, PROD: false, BASE_URL: '/', SSR: false })"
+
+export function makePreviewFiles(files, analysis = analyzeProject(files)) {
+  const out = {}
+  const notes = []
+  let usedMeta = false
+  for (const [path, content] of Object.entries(files)) {
+    if (/^vite\.config\./.test(path) || path === 'index.html' || path === 'package-lock.json' || /(^|\/)node_modules\//.test(path)) continue
+    if (CODE_EXT.test(path) && /import\.meta\./.test(content)) {
+      usedMeta = true
+      out[path] = content.replace(/import\.meta\.env/g, META_ENV).replace(/import\.meta\.hot/g, 'undefined')
+    } else out[path] = content
+  }
+  if (usedMeta) notes.push('import.meta.env preview me khaali chalta hai (.env ki values nahi milti).')
+
+  // Packages: sirf wo jo browser me chalte hain (vite/tailwind jaise tooling nahi)
+  const src = analysis.pkg || {}
+  const deps = {}
+  for (const bucket of [src.devDependencies || {}, src.dependencies || {}]) {
+    for (const [n, v] of Object.entries(bucket)) if (!TOOLING.test(n)) deps[n] = v
+  }
+  if (analysis.usesReact) {
+    deps.react = deps.react || KNOWN_VERSIONS.react
+    deps['react-dom'] = deps['react-dom'] || KNOWN_VERSIONS['react-dom']
+  }
+
+  const entry = analysis.entry || ['src/main.jsx', 'src/index.jsx', 'src/main.js', 'src/index.js', 'index.js'].find((p) => files[p] !== undefined) || null
+  if (!entry) notes.push('Entry file nahi mili (jaise src/main.jsx).')
+  const main = '/' + (entry || 'src/main.jsx')
+  out['package.json'] = JSON.stringify({ name: 'preview-app', version: '1.0.0', main, dependencies: deps }, null, 2)
+
+  // index.html: apni head wali cheezein rakho, Vite ka module <script> hata do
+  let html = files['index.html'] || (analysis.htmlKey ? files[analysis.htmlKey] : '')
+  html = (html || '').replace(/<script[^>]*type=["']module["'][^>]*>\s*<\/script>/gi, '')
+  if (!/id=["']root["']/.test(html)) {
+    html = '<!DOCTYPE html>\n<html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Preview</title></head>\n<body><div id="root"></div></body></html>\n'
+  }
+  out['public/index.html'] = html
+
+  if (analysis.usesTailwind) notes.push('Tailwind preview me CDN se chalta hai (config / plugins ignore hote hain).')
+  return { files: out, notes, entry: main, externalResources: analysis.usesTailwind ? ['https://cdn.tailwindcss.com'] : [], depsKey: JSON.stringify([deps, main]) }
 }
