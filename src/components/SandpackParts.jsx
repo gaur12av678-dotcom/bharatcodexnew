@@ -9,13 +9,14 @@ const FIX_CSS = `
 .sp-wrapper .sp-console { height: 100% !important; }
 `
 
-export function Shell({ files, theme, children }) {
+export function Shell({ files, theme, entry, externalResources, children }) {
   return (
     <SandpackProvider
-      template="vite-react"
+      template="react"
       theme={theme}
       files={files}
-      options={{ autorun: true, recompileMode: 'delayed', recompileDelay: 600 }}
+      customSetup={entry ? { entry } : undefined}
+      options={{ autorun: true, recompileMode: 'delayed', recompileDelay: 600, externalResources: externalResources || [] }}
     >
       <style>{FIX_CSS}</style>
       <div className="h-full min-h-0 flex flex-col">{children}</div>
