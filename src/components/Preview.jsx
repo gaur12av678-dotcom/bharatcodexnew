@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink, Loader2, CheckCircle2 } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
-import { analyzeProject, scanProject, buildCheck, makePreviewFiles } from '../utils/projectAnalyzer.js'
+import { analyzeProject, scanProject, buildCheck, makePreviewFiles, buildDefaultPackage } from '../utils/projectAnalyzer.js'
 import { applyFixes, explainRuntimeError, addDependencyEdits, removeDependencyEdits } from '../utils/errorFixer.js'
 import { ProblemsTab, BuildTab, PackagesTab } from './DevPanels'
 
@@ -80,10 +80,10 @@ const LOG_COLORS = { log: 'text-mute', info: 'text-blue-400', warn: 'text-yellow
 
 const STATUS_TEXT = {
   initial: 'Start ho raha hai...',
-  running: 'Packages install / build ho raha hai...',
+  running: 'Build ho raha hai...',
   idle: 'Ready',
   done: 'Ready',
-  timeout: 'Timeout — Reload dabao',
+  timeout: 'Connect nahi hua',
 }
 
 const nowStr = () => new Date().toLocaleTimeString('en-IN', { hour12: false })
@@ -93,7 +93,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const [vp, setVp] = useState('desktop')
   const [reloadKey, setReloadKey] = useState(0)
   const [logs, setLogs] = useState([])
-  const [showPanel, setShowPanel] = useState(true)
+  const [showPanel, setShowPanel] = useState(false)
   const [tab, setTab] = useState('console')
   const [spStatus, setSpStatus] = useState('initial')
   const [runtimeError, setRuntimeError] = useState(null)
@@ -178,7 +178,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const addPackage = (name, version) => runEdits(addDependencyEdits(files, name, version), name + ' package jodna')
   const removePackage = (name) => runEdits(removeDependencyEdits(files, name), name + ' package hatana')
   const addAllMissing = () => doFix(issues.filter((i) => i.kind === 'missing-dep'))
-  const createPackage = () => runEdits({ edits: [], creates: [{ path: 'package.json', content: makePreviewFiles(files, analysis).files['package.json'] }] }, 'package.json banana')
+  const createPackage = () => runEdits({ edits: [], creates: [{ path: 'package.json', content: buildDefaultPackage(files, analysis) }] }, 'package.json banana')
 
   const spReady = runtime !== 'sandpack' || spStatus === 'done' || spStatus === 'idle'
   const clean = errorCount === 0
@@ -210,8 +210,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
     <button
       key={key}
       type="button"
-      onClick={() => setTab(key)}
-      className={`px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider border-b-2 transition ${tab === key ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}
+      onClick={() => { if (showPanel && tab === key) setShowPanel(false); else { setTab(key); setShowPanel(true) } }}
+      className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider border-b-2 transition ${showPanel && tab === key ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}
     >
       {label}
       {badge > 0 && <span className={`ml-1.5 inline-block min-w-[16px] px-1 rounded-full text-[10px] text-white text-center ${badgeCls}`}>{badge}</span>}
@@ -235,93 +235,88 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const body = (
     <div className="h-full min-h-0 flex flex-col bg-base text-body transition-colors duration-200">
       {/* Toolbar */}
-      <div className="min-h-10 shrink-0 flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-edge bg-surface">
-        <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Live Preview</span>
-        <span className="text-[10px] font-semibold text-blue-300 bg-blue-500/10 rounded px-1.5 py-0.5" title="Is project ko kaise chalaya ja raha hai">{shortRuntime}</span>
-        <span className={`flex items-center gap-1 text-[10px] ${spReady ? 'text-emerald-400' : 'text-yellow-400'}`}>
-          {!spReady && <Loader2 size={11} className="animate-spin" />}{statusLine}
+      <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-edge bg-surface">
+        <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Preview</span>
+        <span className={`flex items-center gap-1 text-[10px] truncate ${spReady ? 'text-emerald-400' : spStatus === 'timeout' ? 'text-red-400' : 'text-yellow-400'}`} title={shortRuntime}>
+          {!spReady && spStatus !== 'timeout' && <Loader2 size={11} className="animate-spin" />}{statusLine}
         </span>
         <div className="flex-1" />
-        <div className="flex items-center gap-1 bg-raise rounded-lg p-1 border border-edge">
+        <div className="flex items-center bg-raise rounded-md p-0.5 border border-edge">
           {Object.entries(VIEWPORTS).map(([key, viewport]) => {
             const Icon = viewport.icon
             return (
-              <button key={key} type="button" onClick={() => setVp(key)} title={key}
-                className={`p-1.5 rounded-md transition ${vp === key ? 'bg-blue-600 text-white' : 'text-mute hover:text-body hover:bg-edge'}`}>
-                <Icon size={15} />
+              <button key={key} type="button" onClick={() => setVp(key)} title={key + (viewport.width === '100%' ? '' : ' ' + viewport.width + 'px')}
+                className={`p-1 rounded transition ${vp === key ? 'bg-blue-600 text-white' : 'text-mute hover:text-body'}`}>
+                <Icon size={14} />
               </button>
             )
           })}
         </div>
-        <span className="text-[11px] font-mono text-faint bg-raise border border-edge rounded-md px-2 py-1">
-          {active.width === '100%' ? 'Full' : `${active.width}px`}
-        </span>
         <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]); setSpStatus('initial') }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
-          <RefreshCw size={15} />
+          <RefreshCw size={14} />
         </button>
         <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
-          <ExternalLink size={15} />
-        </button>
-        <button type="button" onClick={() => setShowPanel((s) => !s)} title="Console / Problems"
-          className={`p-1.5 rounded-md transition relative ${showPanel ? 'text-blue-400 bg-raise' : 'text-mute hover:text-body hover:bg-raise'}`}>
-          <Terminal size={15} />
-          {errorCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />}
+          <ExternalLink size={14} />
         </button>
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 min-h-0 overflow-auto p-3 flex justify-center bg-base">
-        <div className="bg-white rounded-xl overflow-hidden shadow-2xl ring-1 ring-edge transition-[width] duration-300 shrink-0"
-          style={{ width: active.width === '100%' ? '100%' : `${active.width}px`, maxWidth: '100%', height: '100%', minHeight: '200px' }}>
-          {runtime === 'sandpack' ? (
-            <SpPreview />
-          ) : (
+      <div className={`flex-1 min-h-0 flex justify-center bg-base ${vp === 'desktop' ? '' : 'p-2 overflow-auto'}`}>
+        <div className={`relative bg-white overflow-hidden transition-[width] duration-300 ${vp === 'desktop' ? 'rounded-none' : 'rounded-xl shadow-2xl ring-1 ring-edge shrink-0'}`}
+          style={{ width: active.width === '100%' ? '100%' : `${active.width}px`, maxWidth: '100%', height: '100%' }}>
+          {runtime === 'sandpack' ? <SpPreview /> : (
             <iframe key={reloadKey} title="Project live preview" sandbox="allow-scripts" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
+          )}
+          {runtime === 'sandpack' && spStatus === 'timeout' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-5 text-center bg-base/95 text-body">
+              <p className="font-semibold text-red-400">Preview server se connect nahi hua</p>
+              <p className="text-xs text-mute max-w-xs">Internet check karo. Site ko <b>https://</b> link se kholo (http se nahi). Phir Reload dabao.</p>
+              <button type="button" onClick={() => { setReloadKey((k) => k + 1); setSpStatus('initial') }} className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold">Reload</button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Bottom panel */}
-      {showPanel && (
-        <div className="h-60 shrink-0 flex flex-col border-t border-edge bg-surface min-h-0">
-          <div className="flex items-center gap-1 px-2 border-b border-edge shrink-0">
-            {tabBtn('console', 'Console', 0)}
-            {tabBtn('problems', 'Problems', problems.length, errorCount ? 'bg-red-500' : 'bg-yellow-500')}
-            {tabBtn('build', 'Build', buildErrors)}
-            {tabBtn('packages', 'Packages', 0)}
-            <div className="flex-1" />
-            {tab === 'console' && (
-              <>
-                <button type="button" onClick={() => navigator.clipboard?.writeText(logs.map((l) => '[' + l.level + '] ' + l.text).join('\n'))} className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-faint hover:text-body hover:bg-raise">Copy</button>
-                <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body"><Trash2 size={13} /></button>
-              </>
-            )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            {/* Console hamesha mount rehta hai taaki logs na khoyein */}
-            <div className={tab === 'console' ? 'h-full' : 'hidden'}>
-              {runtime === 'sandpack' ? <SpConsole /> : staticConsole}
-            </div>
-            {tab === 'problems' && (
-              <ProblemsTab issues={problems} readOnly={readOnly || !onApplyEdits} fixing={fixing} banner={banner} onFix={doFix} onOpen={openFile} />
-            )}
-            {tab === 'build' && <BuildTab items={build} log={buildLog} onOpen={openFile} />}
-            {tab === 'packages' && (
-              <PackagesTab
-                analysis={analysis}
-                issues={issues}
-                readOnly={readOnly || !onApplyEdits}
-                busy={fixing}
-                notes={preview?.notes}
-                onAdd={addPackage}
-                onRemove={removePackage}
-                onAddAllMissing={addAllMissing}
-                onCreatePackage={createPackage}
-              />
-            )}
-          </div>
+      {/* Bottom panel: patli bar, tab dabane par khulta hai */}
+      <div className={`shrink-0 flex flex-col border-t border-edge bg-surface min-h-0 ${showPanel ? 'h-52 max-h-[45%]' : ''}`}>
+        <div className="h-8 shrink-0 flex items-center gap-0.5 px-2">
+          {tabBtn('console', 'Console', 0)}
+          {tabBtn('problems', 'Problems', problems.length, errorCount ? 'bg-red-500' : 'bg-yellow-500')}
+          {tabBtn('build', 'Build', buildErrors)}
+          {tabBtn('packages', 'Packages', 0)}
+          <div className="flex-1" />
+          {showPanel && tab === 'console' && (
+            <>
+              <button type="button" onClick={() => navigator.clipboard?.writeText(logs.map((l) => '[' + l.level + '] ' + l.text).join('\n'))} className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-faint hover:text-body hover:bg-raise">Copy</button>
+              <button type="button" onClick={() => setLogs([])} title="Clear console" className="p-1 rounded text-faint hover:text-body"><Trash2 size={13} /></button>
+            </>
+          )}
+          {showPanel && <button type="button" onClick={() => setShowPanel(false)} className="px-1.5 text-faint hover:text-body text-xs" title="Band karo">✕</button>}
         </div>
-      )}
+        <div className={`flex-1 min-h-0 overflow-y-auto border-t border-edge ${showPanel ? '' : 'hidden'}`}>
+          {/* Console hamesha mount rehta hai taaki logs na khoyein */}
+          <div className={tab === 'console' ? 'h-full' : 'hidden'}>
+            {runtime === 'sandpack' ? <SpConsole /> : staticConsole}
+          </div>
+          {tab === 'problems' && (
+            <ProblemsTab issues={problems} readOnly={readOnly || !onApplyEdits} fixing={fixing} banner={banner} onFix={doFix} onOpen={openFile} />
+          )}
+          {tab === 'build' && <BuildTab items={build} log={buildLog} onOpen={openFile} />}
+          {tab === 'packages' && (
+            <PackagesTab
+              analysis={analysis}
+              issues={issues}
+              readOnly={readOnly || !onApplyEdits}
+              busy={fixing}
+              notes={preview?.notes}
+              onAdd={addPackage}
+              onRemove={removePackage}
+              onAddAllMissing={addAllMissing}
+              onCreatePackage={createPackage}
+            />
+          )}
+        </div>
+      </div>
       {runtime === 'sandpack' && <SpBridge onStatus={setSpStatus} onError={setRuntimeError} onLog={addBuildLog} />}
     </div>
   )
@@ -331,7 +326,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   return (
     <PreviewBoundary>
       <Suspense fallback={<div className="h-full flex items-center justify-center bg-base text-faint text-sm gap-2"><Loader2 size={16} className="animate-spin" /> Preview engine load ho raha hai...</div>}>
-        <Shell key={reloadKey + ':' + preview.depsKey} files={spFiles} theme={theme === 'light' ? 'light' : 'dark'}>
+        <Shell key={reloadKey + ':' + preview.depsKey} files={spFiles} entry={preview.entry} externalResources={preview.externalResources} theme={theme === 'light' ? 'light' : 'dark'}>
           {body}
         </Shell>
       </Suspense>
