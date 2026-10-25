@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   collection,
+  doc,
   onSnapshot,
   query,
+  where,
 } from 'firebase/firestore'
 import JSZip from 'jszip'
 import { db } from '../firebase/config'
@@ -14,6 +16,9 @@ import {
   importProject,
   trashProject,
   restoreProject,
+  pinProject,
+  unpinProject,
+  markAdminProjects,
   timeAgo,
 } from '../services/projectService'
 import {
@@ -26,10 +31,12 @@ import {
   Atom,
   Upload,
   RotateCcw,
+  Pin,
+  PinOff,
 } from 'lucide-react'
 
 export default function Dashboard() {
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, isTeam } = useAuth()
   const { theme } = useTheme()
   const navigate = useNavigate()
 
@@ -41,28 +48,83 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState('active') // 'active' | 'trash'
   const [importing, setImporting] = useState(false)
+  const [pins, setPins] = useState([])
+  const [loadError, setLoadError] = useState('')
+  const markedRef = useRef(new Set())
   const fileInputRef = useRef(null)
 
-  const visible = projects.filter((p) => (view === 'trash' ? p.trashed : !p.trashed))
+  // Pinned projects sabse upar (baaki updatedAt ke order me)
+  const visible = projects
+    .filter((p) => (view === 'trash' ? p.trashed : !p.trashed))
+    .sort((a, b) => Number(pins.includes(b.id)) - Number(pins.includes(a.id)))
+  // Trash/delete sirf project ka owner ya admin kar sakta hai
+  const canManage = (p) => isAdmin || p.ownerId === user?.uid
   const activeCount = projects.filter((p) => !p.trashed).length
   const trashCount = projects.length - activeCount
-useEffect(() => {
-  if (!user) { setProjects([]); setLoading(false); return }
-  setLoading(true)
-  const projectsQuery = query(collection(db, 'projects'))
-  const unsubscribe = onSnapshot(projectsQuery, (snapshot) => {
-    const list = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
-    list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-    // Trash tab alag dikhayenge
-    setProjects(list)
-    setLoading(false)
-  }, (error) => {
-    console.error('Projects load failed:', error)
-    setLoading(false)
-    alert('Projects load nahi ho paaye. Dobara try karo.')
-  })
-  return unsubscribe
-}, [user])
+  // Kaun kya dekhega:
+  //  Admin  -> saare projects
+  //  Team   -> apne + admin ke projects
+  //  Member -> sirf apne projects
+  useEffect(() => {
+    if (!user) { setProjects([]); setLoading(false); return }
+    setLoading(true)
+    setLoadError('')
+    const parts = {}
+    const merge = () => {
+      const map = new Map()
+      Object.values(parts).forEach((list) => list.forEach((p) => map.set(p.id, p)))
+      const list = [...map.values()]
+      list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      setProjects(list)
+      setLoading(false)
+    }
+    const listen = (key, q) => onSnapshot(q, (snapshot) => {
+      parts[key] = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      merge()
+    }, (error) => {
+      console.error('Projects load failed (' + key + '):', error)
+      setLoadError((error.code ? '[' + error.code + '] ' : '') + (error.message || 'Unknown error'))
+      setLoading(false)
+    })
+
+    const unsubs = []
+    if (isAdmin) {
+      unsubs.push(listen('all', query(collection(db, 'projects'))))
+    } else {
+      unsubs.push(listen('own', query(collection(db, 'projects'), where('ownerId', '==', user.uid))))
+      if (isTeam) unsubs.push(listen('admin', query(collection(db, 'projects'), where('ownerIsAdmin', '==', true))))
+    }
+    return () => unsubs.forEach((u) => u())
+  }, [user, isAdmin, isTeam])
+
+  // Admin ke purane projects ko ek baar "team ko dikhao" mark karo (automatic)
+  useEffect(() => {
+    if (!isAdmin || !user) return
+    const todo = projects
+      .filter((p) => p.ownerId === user.uid && p.ownerIsAdmin !== true && !markedRef.current.has(p.id))
+      .map((p) => p.id)
+    if (todo.length === 0) return
+    todo.forEach((pid) => markedRef.current.add(pid))
+    markAdminProjects(todo).catch((e) => console.error('Admin projects mark failed:', e))
+  }, [projects, isAdmin, user])
+
+  // Pinned projects (sirf is user ke liye)
+  useEffect(() => {
+    if (!user) { setPins([]); return }
+    return onSnapshot(doc(db, 'userPins', user.uid), (snap) => {
+      setPins(snap.exists() ? (snap.data().ids || []) : [])
+    }, (e) => console.error('Pins load failed:', e))
+  }, [user])
+
+  const togglePin = async (project) => {
+    if (!user) return
+    try {
+      if (pins.includes(project.id)) await unpinProject(user.uid, project.id)
+      else await pinProject(user.uid, project.id)
+    } catch (e) {
+      console.error('Pin failed:', e)
+    }
+  }
 
   const handleCreate = async (event) => {
     event.preventDefault()
@@ -77,7 +139,8 @@ useEffect(() => {
       const projectId = await createProject(
         user,
         projectName,
-        type
+        type,
+        isAdmin
       )
 
       setShowModal(false)
@@ -118,7 +181,7 @@ useEffect(() => {
         }
         if (picked.length === 1) projectName = picked[0].name.replace(/\.[^.]+$/, '')
       }
-      const projectId = await importProject(user, projectName.slice(0, 100), entries)
+      const projectId = await importProject(user, projectName.slice(0, 100), entries, isAdmin)
       navigate('/project/' + projectId)
     } catch (error) {
       console.error('Import failed:', error)
@@ -157,13 +220,15 @@ const handleRestore = async (project) => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-body">
-              {isAdmin ? 'Saare Projects' : 'Mere Projects'}
+              {isAdmin ? 'Saare Projects' : isTeam ? 'Team Projects' : 'Mere Projects'}
             </h1>
 
             <p className="text-mute text-sm mt-1">
 {isAdmin
   ? 'Admin view - team ke ' + activeCount + ' projects'
-  : activeCount + ' project' + (activeCount === 1 ? '' : 's')}
+  : isTeam
+    ? 'Tumhare + admin ke ' + activeCount + ' projects'
+    : activeCount + ' project' + (activeCount === 1 ? '' : 's')}
             </p>
           </div>
 
@@ -195,6 +260,18 @@ const handleRestore = async (project) => {
             </button>
           </div>
         </div>
+
+        {loadError && (
+          <div className="mb-6 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm">
+            <p className="font-semibold text-red-400 mb-1">Projects load nahi ho paaye</p>
+            <p className="text-red-300 break-words font-mono text-xs">{loadError}</p>
+            {loadError.includes('permission') && (
+              <p className="mt-2 text-amber-300">
+                Firebase Console &gt; Firestore &gt; Rules me naya <b>firestore.rules</b> paste karke <b>Publish</b> karo.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Projects / Trash tabs */}
         <div className="flex gap-2 mb-6">
@@ -274,28 +351,49 @@ const handleRestore = async (project) => {
                     {project.type === 'react' ? 'React' : 'Web'}
                   </span>
 
-                  {project.trashed ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRestore(project)}
-                      title="Restore project"
-                      aria-label={`Restore ${project.name}`}
-                      className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition"
-                    >
-                      <RotateCcw size={13} />
-                      Restore
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(project)}
-                      title="Trash me bhejo"
-                      aria-label={`Delete ${project.name}`}
-                      className="p-1.5 rounded-lg text-faint hover:text-red-400 hover:bg-red-500/10 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {!project.trashed && (
+                      <button
+                        type="button"
+                        onClick={() => togglePin(project)}
+                        title={pins.includes(project.id) ? 'Unpin karo' : 'Pin karo (sabse upar rahega)'}
+                        aria-label={pins.includes(project.id) ? 'Unpin' : 'Pin'}
+                        className={`p-1.5 rounded-lg transition ${
+                          pins.includes(project.id)
+                            ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20'
+                            : 'text-faint hover:text-amber-400 hover:bg-amber-500/10 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100'
+                        }`}
+                      >
+                        {pins.includes(project.id) ? <Pin size={15} className="fill-current" /> : <PinOff size={15} />}
+                      </button>
+                    )}
+                    {canManage(project) && (
+                      <>
+                      {project.trashed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRestore(project)}
+                          title="Restore project"
+                          aria-label={`Restore ${project.name}`}
+                          className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition"
+                        >
+                          <RotateCcw size={13} />
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(project)}
+                          title="Trash me bhejo"
+                          aria-label={`Delete ${project.name}`}
+                          className="p-1.5 rounded-lg text-faint hover:text-red-400 hover:bg-red-500/10 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <h3 className="text-body font-semibold truncate">
