@@ -48,6 +48,7 @@ export default function EditorPage() {
   const [sideTab, setSideTab] = useState('files') // 'files' ya 'search'
   const [undoStack, setUndoStack] = useState([])   // [{ id, label }] — destructive kaam se pehle ke backups
   const [undoBusy, setUndoBusy] = useState(false)
+  const [view, setView] = useState('split') // 'code' | 'split' | 'preview'
 
   const timerRef = useRef(null)
   const pendingRef = useRef(null)
@@ -388,6 +389,16 @@ export default function EditorPage() {
 
         <div className="flex-1" />
 
+        {/* Code / Split / Preview */}
+        <div className="flex items-center bg-raise border border-edge rounded-lg p-0.5 text-[11px] font-semibold">
+          {[['code', 'Code'], ['split', 'Split'], ['preview', 'Preview']].map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setView(k)}
+              className={`px-2.5 py-1 rounded-md transition ${view === k ? 'bg-blue-600 text-white' : 'text-mute hover:text-body'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* Tools */}
         {!readOnly && (
           <div className="hidden sm:flex items-center gap-0.5 mr-1">
@@ -488,7 +499,7 @@ export default function EditorPage() {
 
           {/* Editor + Preview */}
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
-            <div className="h-1/2 lg:h-auto lg:w-1/2 flex flex-col border-b lg:border-b-0 lg:border-r border-edge min-h-0">
+            <div className={`${view === 'preview' ? 'hidden' : view === 'code' ? 'flex-1' : 'h-[45%] lg:h-auto lg:w-[45%]'} flex flex-col border-b lg:border-b-0 lg:border-r border-edge min-h-0 min-w-0`}>
               {activeFile ? (
                 <Editor
                   key={active + ':' + editorKey}
@@ -527,7 +538,7 @@ export default function EditorPage() {
                 </div>
               )}
             </div>
-            <div className="h-1/2 lg:h-auto lg:w-1/2 min-h-0">
+            <div className={`${view === 'code' ? 'hidden' : view === 'preview' ? 'flex-1' : 'h-[55%] lg:h-auto lg:w-[55%]'} min-h-0 min-w-0`}>
               <Preview type={project.type} files={filesObj} readOnly={readOnly} onApplyEdits={applyEdits} onOpenFile={openAt} />
             </div>
           </div>
