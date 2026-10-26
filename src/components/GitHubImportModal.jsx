@@ -42,7 +42,7 @@ export default function GitHubImportModal({ onClose }) {
   const [token, setToken] = useState(getGitHubToken())
   const [repos, setRepos] = useState([])
   const [loadingRepos, setLoadingRepos] = useState(false)
-  const [wantPrivate, setWantPrivate] = useState(false)
+  const [wantPrivate, setWantPrivate] = useState(true)
   const [url, setUrl] = useState('')
   const [filter, setFilter] = useState('')
   const [busy, setBusy] = useState('') // '' | 'connect' | 'import'
@@ -179,7 +179,7 @@ export default function GitHubImportModal({ onClose }) {
                 checked={wantPrivate}
                 onChange={(e) => setWantPrivate(e.target.checked)}
               />
-              Private repos bhi dikhao (GitHub se extra permission maangega)
+              Push/Pull aur private repos ke liye permission (recommended)
             </label>
           </div>
         ) : (
