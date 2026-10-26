@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore'
-import { auth, db, googleProvider } from '../firebase/config'
+import { auth, db, googleProvider, githubProvider } from '../firebase/config'
 
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -68,6 +68,10 @@ export const AuthProvider = ({ children }) => {
     await signInWithPopup(auth, googleProvider)
   }
 
+  const signInWithGitHub = async () => {
+    await signInWithPopup(auth, githubProvider)
+  }
+
   const logout = () => signOut(auth)
 
   return (
@@ -79,6 +83,7 @@ export const AuthProvider = ({ children }) => {
         isAdmin: profile?.role === 'admin',
         isTeam: profile?.role === 'team',
         signInWithGoogle,
+        signInWithGitHub,
         logout,
       }}
     >
