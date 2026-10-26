@@ -21,6 +21,7 @@ import {
   markAdminProjects,
   timeAgo,
 } from '../services/projectService'
+import GitHubImportModal from '../components/GitHubImportModal'
 import {
   Plus,
   Trash2,
@@ -33,6 +34,7 @@ import {
   RotateCcw,
   Pin,
   PinOff,
+  Github,
 } from 'lucide-react'
 
 export default function Dashboard() {
@@ -50,6 +52,7 @@ export default function Dashboard() {
   const [importing, setImporting] = useState(false)
   const [pins, setPins] = useState([])
   const [loadError, setLoadError] = useState('')
+  const [showGithub, setShowGithub] = useState(false)
   const markedRef = useRef(new Set())
   const fileInputRef = useRef(null)
 
@@ -249,6 +252,14 @@ const handleRestore = async (project) => {
             >
               {importing ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
               {importing ? 'Importing...' : 'Import Project'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowGithub(true)}
+              className="flex items-center justify-center gap-2 bg-surface border border-edge hover:border-blue-500/50 text-body font-semibold px-4 py-2.5 rounded-xl transition"
+            >
+              <Github size={18} />
+              Import from GitHub
             </button>
             <button
               type="button"
@@ -519,6 +530,7 @@ const handleRestore = async (project) => {
           </form>
         </div>
       )}
+      {showGithub && <GitHubImportModal onClose={() => setShowGithub(false)} />}
     </div>
   )
 }
