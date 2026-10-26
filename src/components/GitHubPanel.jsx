@@ -3,7 +3,7 @@ import { Github, X, Loader2, ArrowUpFromLine, ArrowDownToLine, RefreshCw, Extern
 import { createVersion, getProjectFiles, setProjectGitHub } from '../services/projectService'
 import {
   connectGitHub, getGitHubToken, hasRepoScope, createRepo, linkExistingRepo,
-  parseRepo, getStatus, pushFiles, pullFromGitHub, getHead,
+  parseRepo, getStatus, pushFiles, pullFromGitHub, listRepos,
 } from '../services/githubService'
 
 const errorText = (e) => {
@@ -59,6 +59,7 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
   const [isPrivate, setIsPrivate] = useState(true)
   const [linkInput, setLinkInput] = useState('')
   const [message, setMessage] = useState('')
+  const [suggestions, setSuggestions] = useState([])
 
   const fail = (e) => { console.error('GitHub error:', e); setError(errorText(e)); if (e?.message === 'GH_UNAUTHORIZED') { setReady(false); setToken('') } }
 
@@ -79,6 +80,21 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
   }, [gh?.owner, gh?.repo, gh?.branch, gh?.headSha, ready, projectId])
 
   useEffect(() => { refreshStatus() }, [refreshStatus])
+
+  // Link nahi hai to project ke naam se milte-julte repos suggest karo
+  useEffect(() => {
+    if (gh || !ready) { setSuggestions([]); return }
+    let alive = true
+    const norm = (x) => (x || '').toLowerCase().replace(/[-_ ]?(main|master)$/, '').replace(/[^a-z0-9]/g, '')
+    const want = norm(project.name)
+    listRepos(getGitHubToken())
+      .then((list) => {
+        if (!alive || !want) return
+        setSuggestions(list.filter((r) => norm(r.name) === want || (want.length > 4 && norm(r.name).startsWith(want))).slice(0, 3))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [gh, ready, project.name])
 
   const handleConnect = async () => {
     if (busy) return
@@ -115,18 +131,44 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
   }
 
   // ---------- MOUJUDA REPO LINK ----------
-  const handleLink = async (ev) => {
-    ev.preventDefault()
+  // mode 'pull' = GitHub ka latest code project me lao (backup ke saath)
+  // mode 'push' = mera project hi sahi hai, ab ise GitHub pe bhejna hai
+  const doLink = async (owner, repo, mode) => {
     if (busy) return
-    const parsed = parseRepo(linkInput)
-    if (!parsed) { setError('Sahi format daalo: owner/repo'); return }
     setBusy('link'); setError(''); setNotice('')
     try {
-      const link = await linkExistingRepo(token, parsed.owner, parsed.repo)
-      await setProjectGitHub(projectId, link)
-      onChanged({ github: link })
+      const link = await linkExistingRepo(token, owner, repo)
+      if (mode === 'pull') {
+        if (!window.confirm(`${link.owner}/${link.repo} ka latest code is project me aayega. Jo files dono jagah alag hongi wo GitHub wali se replace hongi.\n\nPehle backup ban jayega (History me). Aage badho?`)) return
+        const files = await freshFiles()
+        try {
+          await createVersion(projectId, user, files, project.folders || [], 'Auto: GitHub link/pull se pehle', true)
+        } catch (e) {
+          if (!window.confirm('Backup nahi ban paya (project bahut bada hai). Phir bhi aage badho?')) return
+        }
+        const synced = { ...link, headSha: '' }
+        await setProjectGitHub(projectId, synced)
+        onChanged({ github: synced })
+        setProgress('GitHub se code aa raha hai...')
+        const res = await pullFromGitHub({
+          token, github: synced, projectId, files, user,
+          onProgress: (d, t) => setProgress(`Pull ho raha hai ${d}/${t}`),
+        })
+        onChanged({ github: res.github, reload: true })
+        setNotice(`Jud gaya: ${link.owner}/${link.repo} — ${res.updated} file(s) sync hui. Ab Push/Pull chalega.`)
+      } else {
+        await setProjectGitHub(projectId, link)
+        onChanged({ github: link })
+      }
       setLinkInput('')
-    } catch (e) { fail(e) } finally { setBusy('') }
+    } catch (e) { fail(e) } finally { setBusy(''); setProgress('') }
+  }
+
+  const handleLink = (ev, mode) => {
+    ev.preventDefault()
+    const parsed = parseRepo(linkInput)
+    if (!parsed) { setError('Sahi format daalo: owner/repo'); return }
+    doLink(parsed.owner, parsed.repo, mode)
   }
 
   const handleUnlink = async () => {
@@ -198,10 +240,24 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
           </button>
         </div>
 
+        {gh && !ready && (
+          <div className="bg-raise border border-edge rounded-xl p-3.5 mb-4">
+            <div className="flex items-center gap-2">
+              <Github size={16} className="text-mute shrink-0" />
+              <a href={repoUrl} target="_blank" rel="noreferrer"
+                className="text-body text-sm font-semibold truncate hover:text-blue-400 flex items-center gap-1">
+                {gh.owner}/{gh.repo} <ExternalLink size={12} />
+              </a>
+              <span className="ml-auto text-[11px] text-faint shrink-0">{gh.branch}</span>
+            </div>
+            <p className="text-faint text-xs mt-1.5">Yeh project is repo se juda hua hai.</p>
+          </div>
+        )}
+
         {!ready ? (
           <div className="text-center">
             <p className="text-mute text-sm mb-4">
-              Push / Pull / naya repo ke liye GitHub connect karo aur <b>repo</b> permission do.
+              {gh ? 'Push / Pull karne ke liye ek baar GitHub connect karo (is session ke liye).' : 'Push / Pull / naya repo ke liye GitHub connect karo aur repo permission do.'}
             </p>
             <button type="button" onClick={handleConnect} disabled={!!busy}
               className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-semibold py-3 rounded-xl transition disabled:opacity-60">
@@ -289,22 +345,41 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
 
             <div className="flex items-center gap-3 mb-4">
               <div className="h-px flex-1 bg-edge" />
-              <span className="text-faint text-xs">ya moujuda repo se jodo</span>
+              <span className="text-faint text-xs">ya moujuda repo se jodo (purana import wala project)</span>
               <div className="h-px flex-1 bg-edge" />
             </div>
 
-            <form onSubmit={handleLink}>
-              <div className="flex gap-2">
-                <input value={linkInput} onChange={(e) => setLinkInput(e.target.value)} disabled={!!busy}
-                  placeholder="owner/repo"
-                  className="flex-1 min-w-0 bg-raise border border-edge rounded-lg px-3.5 py-2.5 text-body placeholder-faint focus:outline-none focus:border-blue-500" />
+            {suggestions.length > 0 && (
+              <div className="mb-3 rounded-xl border border-blue-500/30 bg-blue-500/5 p-3">
+                <p className="text-xs text-blue-300 mb-2">Kya yeh is project ka repo hai?</p>
+                {suggestions.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2 py-1">
+                    <span className="text-body text-sm truncate">{r.fullName}</span>
+                    <button type="button" disabled={!!busy} onClick={() => doLink(r.owner, r.name, 'pull')}
+                      className="ml-auto shrink-0 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg disabled:opacity-60">
+                      Isse jodo
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={(e) => handleLink(e, 'pull')}>
+              <input value={linkInput} onChange={(e) => setLinkInput(e.target.value)} disabled={!!busy}
+                placeholder="owner/repo"
+                className="w-full bg-raise border border-edge rounded-lg px-3.5 py-2.5 text-body placeholder-faint focus:outline-none focus:border-blue-500 mb-2" />
+              <div className="grid grid-cols-2 gap-2">
                 <button type="submit" disabled={!!busy || !linkInput.trim()}
-                  className="bg-raise border border-edge hover:border-blue-500/50 disabled:opacity-50 text-body font-semibold px-4 rounded-lg transition">
-                  {busy === 'link' ? <Loader2 size={16} className="animate-spin" /> : 'Link'}
+                  className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition">
+                  {busy === 'link' ? <Loader2 size={15} className="animate-spin" /> : <ArrowDownToLine size={15} />} Jodo + Pull
+                </button>
+                <button type="button" disabled={!!busy || !linkInput.trim()} onClick={(e) => handleLink(e, 'push')}
+                  className="flex items-center justify-center gap-1.5 bg-raise border border-edge hover:border-blue-500/50 disabled:opacity-50 text-body text-sm font-semibold py-2.5 rounded-lg transition">
+                  <ArrowUpFromLine size={15} /> Jodo + Push
                 </button>
               </div>
               <p className="text-faint text-xs mt-2">
-                Link ke baad Push karne par jo files alag hongi wo GitHub pe replace hongi (pehle count dikhega).
+                <b>Jodo + Pull:</b> repo ka latest code project me aayega (backup ke saath). <b>Jodo + Push:</b> tumhara project hi sahi maana jayega, aur Push par alag files GitHub pe replace hongi.
               </p>
             </form>
           </>
