@@ -29,6 +29,8 @@ const errorText = (e) => {
       return 'Is naam ka repo tumhare account me pehle se hai. Dusra naam chuno.'
     case 'GH_INVALID':
       return 'GitHub ne request reject ki. Repo ka naam check karo.'
+    case 'GH_STALE':
+      return 'GitHub abhi tumhara pichla push sync kar raha hai. 10-20 second baad dobara try karo.'
     case 'GH_BEHIND':
       return 'GitHub pe naye changes hain. Pehle Pull karo, phir Push.'
     case 'GH_CONFLICT':
@@ -282,8 +284,9 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
                   <span className="text-faint flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Check ho raha hai...</span>
                 ) : status ? (
                   <>
+                    {status.stale && <span className="text-amber-300">GitHub abhi sync ho raha hai, thodi der baad Refresh dabao</span>}
                     {status.behind && <span className="text-amber-300">GitHub pe naye changes hain → Pull karo</span>}
-                    {!status.behind && status.changed === 0 && status.deleted === 0 && <span className="text-emerald-400">Sab sync me hai ✓</span>}
+                    {!status.stale && !status.behind && status.changed === 0 && status.deleted === 0 && <span className="text-emerald-400">Sab sync me hai ✓</span>}
                     {(status.changed > 0 || status.deleted > 0) && (
                       <span className="text-blue-300">{status.changed} file badli{status.deleted ? `, ${status.deleted} delete` : ''} (push baaki)</span>
                     )}
