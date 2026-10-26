@@ -1,7 +1,8 @@
 // Sandpack (browser me chalne wala Vite/React runtime) ke tukde.
 // Ye file Preview.jsx se "lazy" load hoti hai, taaki baaki app halka rahe.
 import { useEffect } from 'react'
-import { SandpackProvider, SandpackPreview, SandpackConsole, useSandpack } from '@codesandbox/sandpack-react'
+import { SandpackProvider, SandpackPreview, SandpackConsole, UnstyledOpenInCodeSandboxButton, useSandpack } from '@codesandbox/sandpack-react'
+import { ExternalLink } from 'lucide-react'
 
 const FIX_CSS = `
 .sp-wrapper { height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -70,4 +71,23 @@ export function Bridge({ onStatus, onError, onLog }) {
   }, [listen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
+}
+
+// React project ko pure naye tab me kholo (CodeSandbox par). Project ka code codesandbox.io ko jaata hai,
+// isliye pehle confirm poochte hain.
+export function OpenInCsb({ className }) {
+  return (
+    <span
+      onClickCapture={(e) => {
+        const ok = window.confirm(
+          'React preview BharatCodex ke andar hi chalta hai.\n\nPoore naye tab me chalane ke liye project ka code CodeSandbox (codesandbox.io) par bheja jayega aur wahan khulega.\n\nPrivate code ho to mat bhejo — uske liye GitHub par push karke Cloudflare pe deploy karo.\n\nAage badho?'
+        )
+        if (!ok) { e.stopPropagation(); e.preventDefault() }
+      }}
+    >
+      <UnstyledOpenInCodeSandboxButton className={className} title="Naye tab me kholo (CodeSandbox)">
+        <ExternalLink size={14} />
+      </UnstyledOpenInCodeSandboxButton>
+    </span>
+  )
 }
