@@ -125,7 +125,7 @@ const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache)(\/|$)/i
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|woff2?|ttf|otf|eot|mp3|mp4|webm|mov|pdf|zip|rar|7z|exe|dll|so|bin|lock)$/i  // svg ab text ki tarah import hota hai (icons toot-te the)
 const MAX_FILE = 900000 // Firestore doc limit ~1MB
 
-export async function importProject(user, name, entries, isAdmin = false) {
+export async function importProject(user, name, entries, isAdmin = false, github = null) {
   // entries: [{ path, content }]
   let list = entries.filter((e) => e.path && !SKIP.test(e.path) && !BINARY.test(e.path) && typeof e.content === 'string' && e.content.length <= MAX_FILE)
   if (list.length === 0) throw new Error('NO_FILES')
@@ -151,6 +151,7 @@ export async function importProject(user, name, entries, isAdmin = false) {
     ownerIsAdmin: !!isAdmin,
     public: false, trashed: false,
     folders: [...folderSet].sort(),
+    ...(github ? { github } : {}),
     createdAt: Date.now(), updatedAt: Date.now(),
   })
   for (let i = 0; i < list.length; i += 400) {
@@ -166,6 +167,56 @@ export async function importProject(user, name, entries, isAdmin = false) {
     await batch.commit()
   }
   return ref.id
+}
+
+// GitHub se aaye changes project me likho (pull) + project ka github sync-point update karo
+export async function applyRemoteChanges(projectId, writes, deletes, github, user) {
+  const ops = []
+  for (const w of writes) {
+    const cut = w.path.lastIndexOf('/')
+    ops.push({
+      type: 'set',
+      ref: doc(db, 'projects', projectId, 'files', encodeURIComponent(w.path)),
+      data: {
+        name: cut === -1 ? w.path : w.path.slice(cut + 1),
+        folder: cut === -1 ? '' : w.path.slice(0, cut),
+        content: w.content, updatedAt: Date.now(),
+      },
+    })
+  }
+  for (const p of deletes) {
+    ops.push({ type: 'delete', ref: doc(db, 'projects', projectId, 'files', encodeURIComponent(p)) })
+  }
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = writeBatch(db)
+    for (const op of ops.slice(i, i + 400)) {
+      if (op.type === 'delete') batch.delete(op.ref)
+      else batch.set(op.ref, op.data)
+    }
+    await batch.commit()
+  }
+  const projRef = doc(db, 'projects', projectId)
+  const snap = await getDoc(projRef)
+  const folders = new Set(snap.data()?.folders || [])
+  for (const w of writes) {
+    const parts = w.path.split('/').slice(0, -1)
+    let cur = ''
+    for (const part of parts) { cur = cur ? cur + '/' + part : part; folders.add(cur) }
+  }
+  await updateDoc(projRef, {
+    folders: [...folders].sort(),
+    github,
+    updatedAt: Date.now(),
+    lastEditedBy: user?.displayName || user?.email || 'User',
+  })
+}
+
+// Project ka GitHub link save/hatao (github = null => unlink)
+export async function setProjectGitHub(projectId, github) {
+  await updateDoc(doc(db, 'projects', projectId), {
+    github: github || deleteField(),
+    updatedAt: Date.now(),
+  })
 }
 
 export async function getProjectFiles(projectId) {
