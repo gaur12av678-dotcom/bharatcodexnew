@@ -10,6 +10,7 @@ const Shell = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m
 const SpPreview = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.PreviewPane })))
 const SpConsole = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.ConsolePane })))
 const SpBridge = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Bridge })))
+const SpNewTab = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.OpenInCsb })))
 
 class PreviewBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null } }
@@ -255,9 +256,15 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
         <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]); setSpStatus('initial') }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
           <RefreshCw size={14} />
         </button>
-        <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
-          <ExternalLink size={14} />
-        </button>
+        {runtime === 'sandpack' ? (
+          <Suspense fallback={null}>
+            <SpNewTab className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition" />
+          </Suspense>
+        ) : (
+          <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
+            <ExternalLink size={14} />
+          </button>
+        )}
       </div>
 
       {/* Canvas */}
