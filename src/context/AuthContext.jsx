@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { onAuthStateChanged, signInWithPopup, signOut, GithubAuthProvider } from 'firebase/auth'
 import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore'
 import { auth, db, googleProvider, githubProvider } from '../firebase/config'
+import { rememberGitHubToken } from '../services/githubService'
 
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -69,7 +70,9 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signInWithGitHub = async () => {
-    await signInWithPopup(auth, githubProvider)
+    const result = await signInWithPopup(auth, githubProvider)
+    const token = GithubAuthProvider.credentialFromResult(result)?.accessToken
+    if (token) rememberGitHubToken(token, 'basic')
   }
 
   const logout = () => signOut(auth)
