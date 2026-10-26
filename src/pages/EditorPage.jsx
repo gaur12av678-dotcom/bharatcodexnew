@@ -12,11 +12,12 @@ import {
 import Preview from '../components/Preview'
 import FileExplorer from '../components/FileExplorer'
 import VersionHistory from '../components/VersionHistory'
+import GitHubPanel from '../components/GitHubPanel'
 import SearchPanel from '../components/SearchPanel'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files, Github,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -44,6 +45,7 @@ export default function EditorPage() {
   const [showExplorer, setShowExplorer] = useState(true)
   const [copied, setCopied] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showGithub, setShowGithub] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
   const [sideTab, setSideTab] = useState('files') // 'files' ya 'search'
   const [undoStack, setUndoStack] = useState([])   // [{ id, label }] — destructive kaam se pehle ke backups
@@ -305,6 +307,22 @@ export default function EditorPage() {
     setEditorKey((k) => k + 1)
   }
 
+  // GitHub panel se: link badla (project.github) ya pull ke baad files reload karni hain
+  const handleGitHubChanged = async ({ github, reload }) => {
+    if (!reload) {
+      setProject((p) => ({ ...p, github: github || undefined }))
+      return
+    }
+    clearTimeout(timerRef.current)
+    pendingRef.current = null
+    const [files, snap] = await Promise.all([getProjectFiles(id), getDoc(doc(db, 'projects', id))])
+    setFileList(files)
+    setProject((p) => ({ ...p, folders: snap.data()?.folders || [], github: github || undefined }))
+    setActive((cur) => (cur && files.some((f) => pathOf(f) === cur)) ? cur : (files[0] ? pathOf(files[0]) : null))
+    setSaveState('saved')
+    setEditorKey((k) => k + 1)
+  }
+
   const togglePublic = async () => {
     try {
       await updateDoc(doc(db, 'projects', id), { public: !project.public })
@@ -416,6 +434,12 @@ export default function EditorPage() {
             className={`${toolBtn} flex items-center gap-1 text-xs disabled:opacity-40`}>
             <Undo2 size={15} />
             <span className="hidden sm:inline">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
+          </button>
+        )}
+        {!readOnly && (
+          <button type="button" onClick={() => setShowGithub(true)} title={project.github ? 'GitHub: ' + project.github.owner + '/' + project.github.repo : 'GitHub — naya repo, push, pull'} className={`${toolBtn} flex items-center gap-1 text-xs`}>
+            <Github size={15} className={project.github ? 'text-emerald-400' : ''} />
+            <span className="hidden sm:inline">GitHub</span>
           </button>
         )}
         {!readOnly && (
@@ -544,6 +568,17 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
+
+      {showGithub && (
+        <GitHubPanel
+          project={project}
+          projectId={id}
+          user={user}
+          onBeforeAction={flushSave}
+          onChanged={handleGitHubChanged}
+          onClose={() => setShowGithub(false)}
+        />
+      )}
 
       {showHistory && (
         <VersionHistory
