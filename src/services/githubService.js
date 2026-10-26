@@ -70,8 +70,14 @@ export async function connectGitHub({ privateRepos = false } = {}) {
 // GitHub API helper
 // =====================================================================
 async function api(path, token, { method = 'GET', body } = {}) {
-  const res = await fetch(API + path, {
+  // GitHub GET jawab browser me ~60 sec cache karta hai => push ke turant baad purana commit dikhta tha.
+  // Isliye cache band + har GET pe naya number laga do.
+  const url = method === 'GET'
+    ? API + path + (path.includes('?') ? '&' : '?') + '_=' + Date.now()
+    : API + path
+  const res = await fetch(url, {
     method,
+    cache: 'no-store',
     headers: {
       Accept: 'application/vnd.github+json',
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -134,6 +140,22 @@ const encodePath = (p) => p.split('/').map(encodeURIComponent).join('/')
 export async function getHead(token, owner, repo, branch) {
   const b = await api(`/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`, token)
   return { sha: b.commit.sha, treeSha: b.commit.commit.tree.sha }
+}
+
+// Stored commit (base) aur GitHub ke abhi ke commit (head) ka rishta:
+// 'same' | 'ahead' (GitHub pe naye commits) | 'behind' (GitHub purana dikh raha, abhi sync ho raha) | 'diverged'
+async function relation(token, owner, repo, baseSha, headSha) {
+  if (!baseSha) return 'ahead'            // sync-point nahi hai => pehle Pull
+  if (baseSha === headSha) return 'same'
+  try {
+    const c = await api(`/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`, token)
+    if (c.status === 'identical') return 'same'
+    if (c.status === 'ahead') return 'ahead'
+    if (c.status === 'behind') return 'behind'
+    return 'diverged'
+  } catch {
+    return 'ahead'
+  }
 }
 
 // Commit/tree ki saari files: Map(path -> { sha, mode, size })
@@ -292,17 +314,19 @@ async function buildPlan({ token, github, files, skipDeletes = false }) {
     }
   }
 
-  return { head, behind: head.sha !== headSha, changed, deleted }
+  const rel = await relation(token, owner, repo, headSha, head.sha)
+  return { head, rel, behind: rel === 'ahead' || rel === 'diverged', stale: rel === 'behind', changed, deleted }
 }
 
 export async function getStatus({ token, github, files }) {
   const plan = await buildPlan({ token, github, files })
-  return { behind: plan.behind, changed: plan.changed.length, deleted: plan.deleted.length }
+  return { behind: plan.behind, stale: plan.stale, changed: plan.changed.length, deleted: plan.deleted.length }
 }
 
 export async function pushFiles({ token, github, files, message, skipDeletes = false, onProgress }) {
   const { owner, repo, branch } = github
   const plan = await buildPlan({ token, github, files, skipDeletes })
+  if (plan.stale && !skipDeletes) throw new Error('GH_STALE')
   if (plan.behind && !skipDeletes) throw new Error('GH_BEHIND')
   if (plan.changed.length === 0 && plan.deleted.length === 0) throw new Error('NOTHING_TO_PUSH')
 
@@ -363,7 +387,11 @@ export async function pushFiles({ token, github, files, message, skipDeletes = f
 export async function pullFromGitHub({ token, github, projectId, files, user, onProgress }) {
   const { owner, repo, branch, headSha } = github
   const head = await getHead(token, owner, repo, branch)
-  if (head.sha === headSha) return { upToDate: true, updated: 0, removed: 0, conflicts: 0, github }
+  const rel = await relation(token, owner, repo, headSha, head.sha)
+  if (rel === 'same' || rel === 'behind') {
+    // 'behind' = GitHub abhi purana commit dikha raha; purana code laakar apna naya code overwrite NAHI karenge
+    return { upToDate: true, updated: 0, removed: 0, conflicts: 0, github }
+  }
 
   const remote = (await getTreeMap(token, owner, repo, head.sha)).map
   let base = new Map()
