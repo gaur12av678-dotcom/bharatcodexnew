@@ -88,12 +88,12 @@ export default function GitHubImportModal({ onClose }) {
     if (busy || !user) return
     setBusy('import'); setError(''); setProgress('Repo padh raha hoon...')
     try {
-      const { name, entries } = await fetchRepoFiles({
+      const { name, entries, github } = await fetchRepoFiles({
         owner, repo, token,
         onProgress: (d, t) => setProgress(`Files download ho rahi hain ${d}/${t}`),
       })
       setProgress('Project ban raha hai...')
-      const id = await importProject(user, name.slice(0, 100), entries, isAdmin)
+      const id = await importProject(user, name.slice(0, 100), entries, isAdmin, github)
       onClose()
       navigate('/project/' + id)
     } catch (e) {
