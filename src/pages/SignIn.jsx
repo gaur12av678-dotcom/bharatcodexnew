@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
-import { Code2, Loader2, Sun, Moon } from 'lucide-react'
+import { Code2, Loader2, Sun, Moon, Github } from 'lucide-react'
 
 export default function SignIn() {
-  const { user, profile, loading, signInWithGoogle } = useAuth()
+  const { user, profile, loading, signInWithGoogle, signInWithGitHub } = useAuth()
   const { theme, toggleTheme } = useTheme()
 
   const [busy, setBusy] = useState(false)
@@ -26,21 +26,30 @@ export default function SignIn() {
     return <Navigate to="/" replace />
   }
 
-  const handleSignIn = async () => {
+  const runSignIn = async (fn) => {
     if (busy) return
 
     setBusy(true)
     setError('')
 
     try {
-      await signInWithGoogle()
+      await fn()
     } catch (e) {
       console.error('Sign in failed:', e)
-      setError('Sign in failed. Dobara try karo.')
+      if (e?.code === 'auth/account-exists-with-different-credential') {
+        setError('Is email se pehle kisi aur tareeke (Google/GitHub) se account bana hai. Wahi use karo.')
+      } else if (e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request') {
+        setError('')
+      } else {
+        setError('Sign in failed. Dobara try karo.')
+      }
     } finally {
       setBusy(false)
     }
   }
+
+  const handleSignIn = () => runSignIn(signInWithGoogle)
+  const handleGitHubSignIn = () => runSignIn(signInWithGitHub)
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-base px-4 py-8 relative transition-colors duration-200">
@@ -121,6 +130,17 @@ export default function SignIn() {
             {busy ? 'Signing in...' : 'Continue with Google'}
           </button>
 
+          {/* GitHub Sign-In */}
+          <button
+            type="button"
+            onClick={handleGitHubSignIn}
+            disabled={busy}
+            className="w-full mt-3 flex items-center justify-center gap-3 bg-slate-900 text-white border border-slate-700 font-semibold py-3 px-4 rounded-xl hover:bg-slate-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <Github size={18} />
+            Continue with GitHub
+          </button>
+
           {/* Error message */}
           {error && (
             <p
@@ -148,4 +168,3 @@ export default function SignIn() {
     </div>
   )
 }
-
