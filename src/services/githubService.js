@@ -367,7 +367,9 @@ export async function pullFromGitHub({ token, github, projectId, files, user, on
 
   const remote = (await getTreeMap(token, owner, repo, head.sha)).map
   let base = new Map()
-  try { base = (await getTreeMap(token, owner, repo, headSha)).map } catch { /* purana commit nahi mila: sab files naye maano */ }
+  if (headSha) {
+    try { base = (await getTreeMap(token, owner, repo, headSha)).map } catch { /* purana commit nahi mila: sab files naye maano */ }
+  }
 
   const local = new Map(files.map((f) => [pathOf(f), f.content || '']))
 
