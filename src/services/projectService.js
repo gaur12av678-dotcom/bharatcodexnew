@@ -383,7 +383,7 @@ export async function createVersion(projectId, user, files, folders, label = '',
 }
 
 export async function listVersions(projectId) {
-  const q = query(collection(db, 'projects', projectId, 'versions'), orderBy('createdAt', 'desc'), limit(60))
+  const q = query(collection(db, 'projects', projectId, 'versions'), orderBy('createdAt', 'desc'), limit(150))
   const snap = await getDocs(q)
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
 }
@@ -398,8 +398,59 @@ export async function deleteVersion(projectId, versionId) {
 // Auto versions 15 se zyada ho jaayein to sabse purane hata do (manual versions safe rehte hain)
 async function pruneAutoVersions(projectId) {
   const all = await listVersions(projectId)
-  const autos = all.filter((v) => v.auto)
+  const autos = all.filter((v) => v.auto && !v.edit)
   for (const v of autos.slice(MAX_AUTO_VERSIONS)) await deleteVersion(projectId, v.id)
+}
+
+// ---- Har edit ka history: "file-name · 27 Oct, 14:32" ----
+// Ek hi file ko 2 minute ke andar baar-baar badlo to ek hi entry update hoti hai (history kachra nahi banti).
+// Rules me version "update" allow nahi hai, isliye purani entry delete + nayi create karte hain.
+const MAX_EDIT_VERSIONS = 30
+const EDIT_MERGE_MS = 2 * 60 * 1000
+const lastEdit = {}   // projectId -> { id, path, start }
+const editChain = {}  // projectId -> Promise (writes line se chalein)
+const editCount = {}
+
+const shortTime = (ts) =>
+  new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+
+export function logEdit(projectId, user, files, folders, file) {
+  const path = (file.folder ? file.folder + '/' : '') + file.name
+  const run = async () => {
+    const data = cleanFiles(files)
+    if (byteSize(JSON.stringify(data)) > MAX_SNAPSHOT_BYTES) return
+    const now = Date.now()
+    const prev = lastEdit[projectId]
+    const merge = prev && prev.path === path && now - prev.start < EDIT_MERGE_MS
+    const vref = doc(collection(db, 'projects', projectId, 'versions'))
+    const batch = writeBatch(db)
+    if (merge) {
+      batch.delete(doc(db, 'projects', projectId, 'versions', prev.id))
+      batch.delete(doc(db, 'projects', projectId, 'versionFiles', prev.id))
+    }
+    batch.set(vref, {
+      label: path + ' · ' + shortTime(now),
+      auto: true,
+      edit: true,
+      file: path,
+      createdAt: now,
+      createdBy: user?.displayName || user?.email || 'User',
+      fileCount: data.length,
+    })
+    batch.set(doc(db, 'projects', projectId, 'versionFiles', vref.id), { files: data, folders: folders || [] })
+    await batch.commit()
+    lastEdit[projectId] = { id: vref.id, path, start: merge ? prev.start : now }
+    editCount[projectId] = (editCount[projectId] || 0) + 1
+    if (editCount[projectId] % 10 === 0) await pruneEditVersions(projectId).catch(() => {})
+  }
+  editChain[projectId] = (editChain[projectId] || Promise.resolve()).then(run).catch((e) => console.error('Edit history failed:', e))
+  return editChain[projectId]
+}
+
+async function pruneEditVersions(projectId) {
+  const all = await listVersions(projectId)
+  const edits = all.filter((v) => v.edit)
+  for (const v of edits.slice(MAX_EDIT_VERSIONS)) await deleteVersion(projectId, v.id)
 }
 
 // Version wapis lao: pehle abhi ka backup, phir files replace
