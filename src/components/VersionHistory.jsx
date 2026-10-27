@@ -151,7 +151,7 @@ export default function VersionHistory({ projectId, user, files, folders, onBefo
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-body truncate">
                     {v.label || (v.auto ? 'Auto backup' : 'Version')}
-                    {v.auto && <span className="ml-2 text-[10px] font-bold uppercase text-faint bg-raise px-1.5 py-0.5 rounded">auto</span>}
+                    {v.auto && <span className="ml-2 text-[10px] font-bold uppercase text-faint bg-raise px-1.5 py-0.5 rounded">{v.edit ? 'edit' : 'auto'}</span>}
                   </p>
                   <p className="text-xs text-faint truncate">
                     {fmtTime(v.createdAt)} · {v.createdBy || 'User'} · {v.fileCount ?? '?'} files
