@@ -7,17 +7,18 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import {
   getProjectFiles, saveFile, createFile, deleteFile, renameFile,
-  createFolder, deleteFolder, renameFolder, createVersion, restoreVersion,
+  createFolder, deleteFolder, renameFolder, createVersion, restoreVersion, logEdit,
 } from '../services/projectService'
 import Preview from '../components/Preview'
 import FileExplorer from '../components/FileExplorer'
 import VersionHistory from '../components/VersionHistory'
 import GitHubPanel from '../components/GitHubPanel'
 import SearchPanel from '../components/SearchPanel'
+import PasteBox from '../components/PasteBox'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files, Github,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files, Github, ClipboardPaste, ClipboardCheck, Copy,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -26,6 +27,9 @@ const EXT_LANG = {
   py: 'python', xml: 'xml', svg: 'xml', yml: 'yaml', yaml: 'yaml',
 }
 const langOf = (name) => EXT_LANG[name.split('.').pop()?.toLowerCase()] || 'plaintext'
+
+const MOBILE_QUERY = '(max-width: 767px)'
+const pathOf = (f) => (f.folder ? f.folder + '/' + f.name : f.name)
 
 export default function EditorPage() {
   const { id } = useParams()
@@ -42,8 +46,12 @@ export default function EditorPage() {
   const [fontSize, setFontSize] = useState(14)
   const [wordWrap, setWordWrap] = useState(true)
   const [minimap, setMinimap] = useState(false)
-  const [showExplorer, setShowExplorer] = useState(true)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches)
+  const [showExplorer, setShowExplorer] = useState(() => typeof window === 'undefined' || !window.matchMedia(MOBILE_QUERY).matches)
+  const [mobilePreview, setMobilePreview] = useState(false) // mobile par preview alag full-screen page
+  const [pasteMode, setPasteMode] = useState(null)          // null | 'insert' | 'replace'
   const [copied, setCopied] = useState(false)
+  const [fileCopied, setFileCopied] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [showGithub, setShowGithub] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
@@ -56,7 +64,35 @@ export default function EditorPage() {
   const pendingRef = useRef(null)
   const editorRef = useRef(null)
   const snapDoneRef = useRef(false) // is session ka auto-backup ban chuka hai?
+  const fileListRef = useRef([])
+  const projectRef = useRef(null)
   const revealRef = useRef(null)    // search result se file khulne ke baad kis line par jaana hai
+
+  fileListRef.current = fileList
+  projectRef.current = project
+
+  // Screen size badalne par mobile/desktop layout badlo
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const on = () => setIsMobile(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+
+  // Mobile preview page: phone ka Back button isse band kare, poori app se bahar na jaye
+  useEffect(() => {
+    if (!mobilePreview) return
+    window.history.pushState({ ...(window.history.state || {}), bcPreview: 1 }, '')
+    const onPop = () => setMobilePreview(false)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [mobilePreview])
+  useEffect(() => { if (!isMobile) setMobilePreview(false) }, [isMobile])
+
+  const closeMobilePreview = () => {
+    if (window.history.state?.bcPreview) window.history.back()
+    else setMobilePreview(false)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -96,8 +132,12 @@ export default function EditorPage() {
     if (!pending) return
     pendingRef.current = null
     try {
-     await saveFile(id, pending.file, pending.content, user?.displayName || user?.email)
+      await saveFile(id, pending.file, pending.content, user?.displayName || user?.email)
       if (!pendingRef.current) setSaveState('saved')
+      // Har edit ke baad history: "file-naam · time" (fail ho to bhi save safe rehta hai)
+      const key = pathOf(pending.file)
+      const snapshot = fileListRef.current.map((f) => (pathOf(f) === key ? { ...f, content: pending.content } : f))
+      logEdit(id, user, snapshot, projectRef.current?.folders || [], pending.file)
     } catch (error) {
       console.error('File save failed:', error)
       pendingRef.current = pending
@@ -220,8 +260,6 @@ export default function EditorPage() {
     if (file) scheduleSave(file, content)
   }
 
-  const pathOf = (f) => (f.folder ? f.folder + '/' + f.name : f.name)
-
   const switchFile = async (key) => {
     if (key === active) return
     await flushSave()
@@ -342,6 +380,39 @@ export default function EditorPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  // ---- Paste / Copy (mobile par Monaco ka long-press paste bharosemand nahi) ----
+  const insertText = (text) => {
+    const ed = editorRef.current
+    if (!ed || readOnly) return
+    ed.focus()
+    ed.executeEdits('bc-paste', [{ range: ed.getSelection(), text, forceMoveMarkers: true }])
+  }
+  const replaceAllText = (text) => {
+    const ed = editorRef.current
+    const model = ed?.getModel()
+    if (!ed || !model || readOnly) return
+    ed.executeEdits('bc-replace', [{ range: model.getFullModelRange(), text, forceMoveMarkers: true }])
+    ed.setPosition({ lineNumber: 1, column: 1 })
+  }
+  const smartPaste = async () => {
+    try {
+      const t = await navigator.clipboard.readText()
+      if (t) { insertText(t); return }
+    } catch { /* permission nahi mili — neeche box khulega */ }
+    setPasteMode('insert')
+  }
+  const copyFile = async () => {
+    const text = editorRef.current?.getValue() ?? activeFile?.content ?? ''
+    try { await navigator.clipboard.writeText(text) } catch { window.prompt('Copy karo:', text.slice(0, 2000)) }
+    setFileCopied(true)
+    setTimeout(() => setFileCopied(false), 1500)
+  }
+  const applyPaste = (text, mode) => {
+    if (mode === 'replace') replaceAllText(text)
+    else insertText(text)
+    setPasteMode(null)
+  }
+
   const formatCode = () => {
     editorRef.current?.getAction('editor.action.formatDocument')?.run()
   }
@@ -386,29 +457,36 @@ export default function EditorPage() {
 
   const toolBtn = 'p-1.5 rounded-lg text-mute hover:text-body hover:bg-raise transition'
 
+  const effView = isMobile ? 'code' : view
+  const closeDrawer = () => { if (isMobile) setShowExplorer(false) }
+
+  const previewEl = (
+    <Preview type={project.type} files={filesObj} readOnly={readOnly} onApplyEdits={applyEdits} onOpenFile={openAt} />
+  )
+
   return (
     <div className="h-full flex flex-col bg-base text-body">
-      {/* Top bar */}
-      <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-surface border-b border-edge">
-        <button type="button" onClick={() => setShowExplorer((s) => !s)} title="Toggle files" className={toolBtn}>
+      {/* Top bar — mobile par tools neeche ki doosri line me scroll hote hain, kuch bahar nahi nikalta */}
+      <div className="shrink-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-1 min-h-11 bg-surface border-b border-edge">
+        <button type="button" onClick={() => setShowExplorer((s) => !s)} title="Files" className={`${toolBtn} shrink-0`}>
           <PanelLeft size={17} />
         </button>
-        <Link to="/" className={toolBtn} aria-label="Back"><ArrowLeft size={17} /></Link>
-        <h2 className="text-body font-semibold truncate">{project.name}</h2>
-        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${project.type === 'react' ? 'text-cyan-300 bg-cyan-500/10' : 'text-emerald-300 bg-emerald-500/10'}`}>
+        <Link to="/" className={`${toolBtn} shrink-0`} aria-label="Back"><ArrowLeft size={17} /></Link>
+        <h2 className="text-body font-semibold truncate min-w-0 max-w-[40vw] sm:max-w-xs">{project.name}</h2>
+        <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${project.type === 'react' ? 'text-cyan-300 bg-cyan-500/10' : 'text-emerald-300 bg-emerald-500/10'}`}>
           {project.type}
         </span>
 
         {readOnly && (
-          <span className="flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-raise text-faint">
+          <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-raise text-faint">
             <Eye size={11} /> Read only
           </span>
         )}
 
         <div className="flex-1" />
 
-        {/* Code / Split / Preview */}
-        <div className="flex items-center bg-raise border border-edge rounded-lg p-0.5 text-[11px] font-semibold">
+        {/* Code / Split / Preview — sirf bade screen par */}
+        <div className="hidden md:flex shrink-0 items-center bg-raise border border-edge rounded-lg p-0.5 text-[11px] font-semibold">
           {[['code', 'Code'], ['split', 'Split'], ['preview', 'Preview']].map(([k, label]) => (
             <button key={k} type="button" onClick={() => setView(k)}
               className={`px-2.5 py-1 rounded-md transition ${view === k ? 'bg-blue-600 text-white' : 'text-mute hover:text-body'}`}>
@@ -417,93 +495,101 @@ export default function EditorPage() {
           ))}
         </div>
 
-        {/* Tools */}
-        {!readOnly && (
-          <div className="hidden sm:flex items-center gap-0.5 mr-1">
-            <button type="button" onClick={formatCode} title="Format code" className={toolBtn}><Wand2 size={15} /></button>
-            <button type="button" onClick={() => setFontSize((s) => Math.max(10, s - 1))} title="Font chhota" className={toolBtn}><Minus size={15} /></button>
-            <button type="button" onClick={() => setFontSize((s) => Math.min(24, s + 1))} title="Font bada" className={toolBtn}><Plus size={15} /></button>
-            <button type="button" onClick={() => setWordWrap((w) => !w)} title="Word wrap" className={`${toolBtn} ${wordWrap ? 'text-blue-400' : ''}`}><WrapText size={15} /></button>
-            <button type="button" onClick={() => setMinimap((m) => !m)} title="Minimap" className={`${toolBtn} ${minimap ? 'text-blue-400' : ''}`}><PanelLeft size={15} className="scale-x-[-1]" /></button>
-            <button type="button" onClick={downloadZip} title="Download ZIP" className={toolBtn}><Download size={15} /></button>
-          </div>
-        )}
-        {!readOnly && (
-          <button type="button" onClick={undoLast} disabled={undoStack.length === 0 || undoBusy}
-            title={undoStack.length ? 'Undo: ' + undoStack[undoStack.length - 1].label : 'Undo (abhi kuch nahi)'}
-            className={`${toolBtn} flex items-center gap-1 text-xs disabled:opacity-40`}>
-            <Undo2 size={15} />
-            <span className="hidden sm:inline">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
-          </button>
-        )}
-        {!readOnly && (
-          <button type="button" onClick={() => setShowGithub(true)} title={project.github ? 'GitHub: ' + project.github.owner + '/' + project.github.repo : 'GitHub — naya repo, push, pull'} className={`${toolBtn} flex items-center gap-1 text-xs`}>
-            <Github size={15} className={project.github ? 'text-emerald-400' : ''} />
-            <span className="hidden sm:inline">GitHub</span>
-          </button>
-        )}
-        {!readOnly && (
-          <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} flex items-center gap-1 text-xs`}>
-            <History size={15} />
-            <span className="hidden sm:inline">History</span>
-          </button>
-        )}
-
-        <button type="button" onClick={shareProject} title="Share link copy karo" className={`${toolBtn} flex items-center gap-1 text-xs`}>
-          <Share2 size={15} className={copied ? 'text-emerald-400' : ''} />
-          {copied && <span className="text-emerald-400">Copied!</span>}
+        {/* Mobile: Preview alag page me khulta hai */}
+        <button type="button" onClick={() => setMobilePreview(true)}
+          className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold">
+          <Eye size={14} /> Preview
         </button>
 
-        {canManage && (
-          <button type="button" onClick={togglePublic} title={project.public ? 'Public — Explore me dikhta hai' : 'Private'} className={`${toolBtn} flex items-center gap-1 text-xs`}>
-            {project.public ? <Globe size={15} className="text-emerald-400" /> : <Lock size={15} />}
-            <span className="hidden sm:inline">{project.public ? 'Public' : 'Private'}</span>
-          </button>
-        )}
-
         {!readOnly && (
-          <span className="flex items-center gap-1.5 text-xs text-faint w-20 justify-end">
-            {saveState === 'saving' && (<><CircleDashed size={13} className="animate-spin text-yellow-400" />Saving</>)}
-            {saveState === 'saved' && (<><Check size={13} className="text-emerald-400" />Saved</>)}
+          <span className="shrink-0 flex items-center gap-1.5 text-xs text-faint sm:w-20 justify-end">
+            {saveState === 'saving' && (<><CircleDashed size={13} className="animate-spin text-yellow-400" /><span className="hidden sm:inline">Saving</span></>)}
+            {saveState === 'saved' && (<><Check size={13} className="text-emerald-400" /><span className="hidden sm:inline">Saved</span></>)}
             {saveState === 'error' && (<span className="text-red-400 flex items-center gap-1"><AlertCircle size={13} />Failed</span>)}
           </span>
         )}
+
+        {/* Tools: mobile par poori-chaudai ki alag line (scroll), desktop par isi line me */}
+        <div className="order-last basis-full md:order-none md:basis-auto flex items-center gap-0.5 overflow-x-auto md:overflow-visible pb-0.5 md:pb-0">
+          {!readOnly && (
+            <>
+              <button type="button" onClick={smartPaste} title="Paste (clipboard se)" className={`${toolBtn} shrink-0`}><ClipboardPaste size={15} /></button>
+              <button type="button" onClick={() => setPasteMode('replace')} title="Poori file replace (paste box)" className={`${toolBtn} shrink-0`}><ClipboardCheck size={15} /></button>
+              <button type="button" onClick={copyFile} title="Poori file copy" className={`${toolBtn} shrink-0 ${fileCopied ? 'text-emerald-400' : ''}`}><Copy size={15} /></button>
+              <button type="button" onClick={formatCode} title="Format code" className={`${toolBtn} shrink-0`}><Wand2 size={15} /></button>
+              <button type="button" onClick={() => setFontSize((s) => Math.max(10, s - 1))} title="Font chhota" className={`${toolBtn} shrink-0`}><Minus size={15} /></button>
+              <button type="button" onClick={() => setFontSize((s) => Math.min(24, s + 1))} title="Font bada" className={`${toolBtn} shrink-0`}><Plus size={15} /></button>
+              <button type="button" onClick={() => setWordWrap((w) => !w)} title="Word wrap" className={`${toolBtn} shrink-0 ${wordWrap ? 'text-blue-400' : ''}`}><WrapText size={15} /></button>
+              <button type="button" onClick={() => setMinimap((m) => !m)} title="Minimap" className={`${toolBtn} shrink-0 hidden md:block ${minimap ? 'text-blue-400' : ''}`}><PanelLeft size={15} className="scale-x-[-1]" /></button>
+              <button type="button" onClick={downloadZip} title="Download ZIP" className={`${toolBtn} shrink-0`}><Download size={15} /></button>
+              <button type="button" onClick={undoLast} disabled={undoStack.length === 0 || undoBusy}
+                title={undoStack.length ? 'Undo: ' + undoStack[undoStack.length - 1].label : 'Undo (abhi kuch nahi)'}
+                className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs disabled:opacity-40`}>
+                <Undo2 size={15} />
+                <span className="hidden sm:inline">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
+              </button>
+              <button type="button" onClick={() => setShowGithub(true)} title={project.github ? 'GitHub: ' + project.github.owner + '/' + project.github.repo : 'GitHub — naya repo, push, pull'} className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
+                <Github size={15} className={project.github ? 'text-emerald-400' : ''} />
+                <span className="hidden sm:inline">GitHub</span>
+              </button>
+              <button type="button" onClick={() => setShowHistory(true)} title="Version history — purana code wapis lao" className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
+                <History size={15} />
+                <span className="hidden sm:inline">History</span>
+              </button>
+            </>
+          )}
+
+          <button type="button" onClick={shareProject} title="Share link copy karo" className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
+            <Share2 size={15} className={copied ? 'text-emerald-400' : ''} />
+            {copied && <span className="text-emerald-400">Copied!</span>}
+          </button>
+
+          {canManage && (
+            <button type="button" onClick={togglePublic} title={project.public ? 'Public — Explore me dikhta hai' : 'Private'} className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
+              {project.public ? <Globe size={15} className="text-emerald-400" /> : <Lock size={15} />}
+              <span className="hidden sm:inline">{project.public ? 'Public' : 'Private'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 flex min-h-0">
-        {/* File explorer / Search */}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* File explorer / Search — desktop par side panel, mobile par drawer */}
         {showExplorer && (
-          <div className="w-56 shrink-0 hidden md:flex flex-col min-h-0">
-            <div className="flex shrink-0 bg-surface border-b border-r border-edge">
-              <button type="button" onClick={() => setSideTab('files')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'files' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
-                <Files size={13} /> Files
-              </button>
-              <button type="button" onClick={() => setSideTab('search')} title="Ctrl+Shift+F"
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'search' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
-                <Search size={13} /> Search
-              </button>
+          <>
+            {isMobile && <div className="fixed inset-0 z-30 bg-black/50" onClick={closeDrawer} />}
+            <div className={isMobile ? 'fixed left-0 top-0 bottom-0 z-40 w-64 max-w-[85vw] flex flex-col min-h-0 bg-surface shadow-2xl' : 'w-56 shrink-0 flex flex-col min-h-0'}>
+              <div className="flex shrink-0 bg-surface border-b border-r border-edge">
+                <button type="button" onClick={() => setSideTab('files')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'files' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
+                  <Files size={13} /> Files
+                </button>
+                <button type="button" onClick={() => setSideTab('search')} title="Ctrl+Shift+F"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 ${sideTab === 'search' ? 'border-blue-500 text-body' : 'border-transparent text-faint hover:text-mute'}`}>
+                  <Search size={13} /> Search
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                {sideTab === 'search' ? (
+                  <SearchPanel files={fileList} onOpen={(path, line) => { closeDrawer(); openAt(path, line) }} />
+                ) : (
+                  <FileExplorer
+                    files={fileList}
+                    folders={project.folders || []}
+                    active={active}
+                    readOnly={readOnly}
+                    onSelect={(key) => { closeDrawer(); return switchFile(key) }}
+                    onCreateFile={handleCreateFile}
+                    onCreateFolder={handleCreateFolder}
+                    onRenameFile={handleRenameFile}
+                    onDeleteFile={handleDeleteFile}
+                    onRenameFolder={handleRenameFolder}
+                    onDeleteFolder={handleDeleteFolder}
+                  />
+                )}
+              </div>
             </div>
-            <div className="flex-1 min-h-0">
-              {sideTab === 'search' ? (
-                <SearchPanel files={fileList} onOpen={openAt} />
-              ) : (
-                <FileExplorer
-                  files={fileList}
-                  folders={project.folders || []}
-                  active={active}
-                  readOnly={readOnly}
-                  onSelect={switchFile}
-                  onCreateFile={handleCreateFile}
-                  onCreateFolder={handleCreateFolder}
-                  onRenameFile={handleRenameFile}
-                  onDeleteFile={handleDeleteFile}
-                  onRenameFolder={handleRenameFolder}
-                  onDeleteFolder={handleDeleteFolder}
-                />
-              )}
-            </div>
-          </div>
+          </>
         )}
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -523,7 +609,7 @@ export default function EditorPage() {
 
           {/* Editor + Preview */}
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
-            <div className={`${view === 'preview' ? 'hidden' : view === 'code' ? 'flex-1' : 'h-[45%] lg:h-auto lg:w-[45%]'} flex flex-col border-b lg:border-b-0 lg:border-r border-edge min-h-0 min-w-0`}>
+            <div className={`${effView === 'preview' ? 'hidden' : effView === 'code' ? 'flex-1' : 'h-[45%] lg:h-auto lg:w-[45%]'} flex flex-col border-b lg:border-b-0 lg:border-r border-edge min-h-0 min-w-0`}>
               {activeFile ? (
                 <Editor
                   key={active + ':' + editorKey}
@@ -545,7 +631,7 @@ export default function EditorPage() {
                     }
                   }}
                   options={{
-                    minimap: { enabled: minimap },
+                    minimap: { enabled: minimap && !isMobile },
                     fontSize,
                     wordWrap: wordWrap ? 'on' : 'off',
                     automaticLayout: true,
@@ -553,6 +639,13 @@ export default function EditorPage() {
                     tabSize: 2,
                     padding: { top: 12 },
                     readOnly,
+                    contextmenu: true,
+                    dragAndDrop: false,
+                    quickSuggestions: !isMobile,
+                    suggestOnTriggerCharacters: !isMobile,
+                    acceptSuggestionOnEnter: isMobile ? 'off' : 'on',
+                    folding: !isMobile,
+                    lineNumbersMinChars: isMobile ? 3 : 5,
                   }}
                 />
               ) : (
@@ -562,12 +655,37 @@ export default function EditorPage() {
                 </div>
               )}
             </div>
-            <div className={`${view === 'code' ? 'hidden' : view === 'preview' ? 'flex-1' : 'h-[55%] lg:h-auto lg:w-[55%]'} min-h-0 min-w-0`}>
-              <Preview type={project.type} files={filesObj} readOnly={readOnly} onApplyEdits={applyEdits} onOpenFile={openAt} />
-            </div>
+            {/* Desktop preview (mobile par ye mount hi nahi hota — alag page me khulta hai) */}
+            {!isMobile && (
+              <div className={`${effView === 'code' ? 'hidden' : effView === 'preview' ? 'flex-1' : 'h-[55%] lg:h-auto lg:w-[55%]'} min-h-0 min-w-0`}>
+                {previewEl}
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Mobile preview — alag full-screen page */}
+      {isMobile && mobilePreview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-base" style={{ height: '100dvh' }}>
+          <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-surface border-b border-edge">
+            <button type="button" onClick={closeMobilePreview} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-body text-sm font-semibold hover:bg-raise">
+              <ArrowLeft size={17} /> Editor
+            </button>
+            <span className="text-sm text-mute truncate">{project.name}</span>
+          </div>
+          <div className="flex-1 min-h-0">{previewEl}</div>
+        </div>
+      )}
+
+      {pasteMode && (
+        <PasteBox
+          fileName={active || ''}
+          initialMode={pasteMode}
+          onApply={applyPaste}
+          onClose={() => setPasteMode(null)}
+        />
+      )}
 
       {showGithub && (
         <GitHubPanel
