@@ -236,13 +236,13 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const body = (
     <div className="h-full min-h-0 flex flex-col bg-base text-body transition-colors duration-200">
       {/* Toolbar */}
-      <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-edge bg-surface">
-        <span className="text-[11px] font-bold text-faint uppercase tracking-widest">Preview</span>
+      <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-edge bg-surface overflow-x-auto">
+        <span className="text-[11px] font-bold text-faint uppercase tracking-widest shrink-0">Preview</span>
         <span className={`flex items-center gap-1 text-[10px] truncate ${spReady ? 'text-emerald-400' : spStatus === 'timeout' ? 'text-red-400' : 'text-yellow-400'}`} title={shortRuntime}>
           {!spReady && spStatus !== 'timeout' && <Loader2 size={11} className="animate-spin" />}{statusLine}
         </span>
         <div className="flex-1" />
-        <div className="flex items-center bg-raise rounded-md p-0.5 border border-edge">
+        <div className="hidden sm:flex items-center bg-raise rounded-md p-0.5 border border-edge shrink-0">
           {Object.entries(VIEWPORTS).map(([key, viewport]) => {
             const Icon = viewport.icon
             return (
@@ -286,7 +286,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
 
       {/* Bottom panel: patli bar, tab dabane par khulta hai */}
       <div className={`shrink-0 flex flex-col border-t border-edge bg-surface min-h-0 ${showPanel ? 'h-52 max-h-[45%]' : ''}`}>
-        <div className="h-8 shrink-0 flex items-center gap-0.5 px-2">
+        <div className="h-8 shrink-0 flex items-center gap-0.5 px-2 overflow-x-auto whitespace-nowrap">
           {tabBtn('console', 'Console', 0)}
           {tabBtn('problems', 'Problems', problems.length, errorCount ? 'bg-red-500' : 'bg-yellow-500')}
           {tabBtn('build', 'Build', buildErrors)}
