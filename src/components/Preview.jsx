@@ -1,9 +1,10 @@
-import { Component, Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
-import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink, Loader2, CheckCircle2 } from 'lucide-react'
+import { Component, Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink, Loader2, CheckCircle2, ArrowLeft, ArrowRight, Home } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 import { analyzeProject, scanProject, buildCheck, makePreviewFiles, buildDefaultPackage } from '../utils/projectAnalyzer.js'
 import { applyFixes, explainRuntimeError, addDependencyEdits, removeDependencyEdits } from '../utils/errorFixer.js'
 import { ProblemsTab, BuildTab, PackagesTab } from './DevPanels'
+import { pickEntry, resolveTarget, srcDocFor, buildStandalone } from '../utils/staticPreview.js'
 
 // React/Vite runtime (Sandpack) — zaroorat padne par hi load hota hai
 const Shell = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Shell })))
@@ -27,48 +28,6 @@ class PreviewBoundary extends Component {
     }
     return this.props.children
   }
-}
-
-const escapeScript = (code = '') => code.replace(/<\/script/gi, '<\\/script')
-
-// Console capture — user code ke logs parent ko bhejta hai (sirf simple HTML projects ke liye)
-const CONSOLE_HOOK = `<script>
-(function () {
-  var send = function (level, args) {
-    var text = args.map(function (a) {
-      if (typeof a === 'object' && a !== null) { try { return JSON.stringify(a) } catch (e) { return String(a) } }
-      return String(a)
-    }).join(' ')
-    try { parent.postMessage({ __bc: true, level: level, text: text }, '*') } catch (e) {}
-  }
-  ;['log', 'info', 'warn', 'error'].forEach(function (level) {
-    var orig = console[level]
-    console[level] = function () { send(level, Array.prototype.slice.call(arguments)); orig.apply(console, arguments) }
-  })
-  window.onerror = function (msg, src, line) { send('error', [msg + ' (line ' + line + ')']) }
-  window.addEventListener('unhandledrejection', function (e) { send('error', ['Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)]) })
-})()
-<\/script>`
-
-const pick = (files, regex) => Object.keys(files).filter((k) => regex.test(k)).sort()
-const findOne = (files, regex) => pick(files, regex)[0]
-
-// Plain HTML/CSS/JS project — index.html ke andar saari CSS + JS inline merge
-const buildWebSrcDoc = (files) => {
-  const htmlKey = findOne(files, /(^|\/)index\.html?$/i) || findOne(files, /\.html?$/i)
-  const css = pick(files, /\.css$/i).map((k) => files[k]).join('\n')
-  const js = pick(files, /\.m?js$/i).map((k) => escapeScript(files[k])).join('\n;\n')
-  let html = htmlKey ? files[htmlKey] : '<!-- index.html nahi mila -->'
-  html = html
-    .replace(/<link[^>]+rel=["']?stylesheet["']?[^>]*href=["'](?!https?:|\/\/)[^"']+["'][^>]*>/gi, '')
-    .replace(/<link[^>]+href=["'](?!https?:|\/\/)[^"']+\.css["'][^>]*>/gi, '')
-    .replace(/<script[^>]+src=["'](?!https?:|\/\/)[^"']+["'][^>]*>\s*<\/script>/gi, '')
-  const head = `<meta charset="UTF-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1.0" />\n${CONSOLE_HOOK}\n<style>${css}</style>`
-  const body = js ? `<script>\n${js}\n<\/script>` : ''
-  if (/<\/head>/i.test(html)) html = html.replace(/<\/head>/i, head + '\n</head>')
-  else html = `<!DOCTYPE html><html><head>${head}</head><body>` + html
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, body + '\n</body>')
-  return html + body + (/<body/i.test(html) ? '' : '</body></html>')
 }
 
 const VIEWPORTS = {
@@ -101,6 +60,9 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const [buildLog, setBuildLog] = useState([])
   const [fixing, setFixing] = useState(false)
   const [fixedAt, setFixedAt] = useState(0)
+  const [nav, setNav] = useState({ stack: [], idx: -1 }) // static preview ka virtual browser history
+  const [blockedUrl, setBlockedUrl] = useState(null)
+  const iframeRef = useRef(null)
 
   // Bhaari scanning typing ke saath-saath nahi, thodi der baad
   const deferred = useDeferredValue(files)
@@ -120,7 +82,31 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
     return out
   }, [preview])
 
-  const srcDoc = useMemo(() => (runtime === 'static' ? buildWebSrcDoc(deferred) : ''), [runtime, deferred])
+  // ---- Static (HTML/CSS/JS) multi-page router ----
+  const entry = useMemo(() => pickEntry(deferred), [deferred])
+  const cur = useMemo(() => {
+    const r = nav.stack[nav.idx]
+    if (r && (!r.file || deferred[r.file] != null)) return r
+    return { file: entry, search: '', hash: '' }
+  }, [nav, deferred, entry])
+  const srcDoc = useMemo(() => (runtime === 'static' ? srcDocFor(deferred, cur) : ''), [runtime, deferred, cur])
+
+  const liveRef = useRef({})
+  liveRef.current = { files: deferred, cur, entry, nav }
+
+  const pushRoute = useCallback((r) => {
+    setNav((n) => {
+      const { entry: e } = liveRef.current
+      const base = n.stack.length ? n.stack.slice(0, n.idx + 1) : [{ file: e, search: '', hash: '' }]
+      return { stack: [...base, r], idx: base.length }
+    })
+  }, [])
+  const goBack = useCallback(() => setNav((n) => (n.idx > 0 ? { ...n, idx: n.idx - 1 } : n)), [])
+  const goForward = useCallback(() => setNav((n) => (n.idx < n.stack.length - 1 ? { ...n, idx: n.idx + 1 } : n)), [])
+  const goHome = () => { setNav({ stack: [], idx: -1 }); setBlockedUrl(null) }
+  const canBack = nav.idx > 0
+  const canForward = nav.idx >= 0 && nav.idx < nav.stack.length - 1
+  const pathLabel = cur.file ? '/' + cur.file + (cur.search || '') + (cur.hash || '') : '/' + (cur.missing || '')
 
   const addBuildLog = useCallback((text) => {
     setBuildLog((prev) => [...prev.slice(-39), nowStr() + '  ' + text])
@@ -130,6 +116,23 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   useEffect(() => {
     const handler = (event) => {
       const data = event.data
+      if (data && data.__bcnav) {
+        if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
+        if (data.__bcnav === 'back') return goBack()
+        if (data.__bcnav === 'forward') return goForward()
+        if (data.__bcnav === 'go') {
+          const { files: f, cur: c, entry: e } = liveRef.current
+          const r = resolveTarget(String(data.href || ''), c.file || e || '', Object.keys(f))
+          if (r.type === 'external') {
+            const w = window.open(r.url, '_blank', 'noopener')
+            if (!w) setBlockedUrl(r.url)
+            return
+          }
+          setBlockedUrl(null)
+          pushRoute(r)
+        }
+        return
+      }
       if (!data || !data.__bc) return
       setLogs((prev) => [...prev.slice(-199), { level: data.level, text: data.text }])
       if (data.level === 'error') {
@@ -139,7 +142,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [])
+  }, [goBack, goForward, pushRoute])
 
   useEffect(() => { setRuntimeError(null); setLogs([]) }, [runtime, reloadKey])
 
@@ -199,9 +202,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   // Preview ko naye tab me kholo (sirf simple HTML projects ke liye). React ke liye "Reload" use karo.
   const openInNewTab = () => {
     if (runtime !== 'static') { alert('React/Vite preview naye tab me nahi khulta. Production ke liye hosting par deploy karo.'); return }
-    const safe = srcDoc.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-    const wrapper = `<!DOCTYPE html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BharatCodex Preview</title><style>html,body{margin:0;height:100%;background:#fff}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-modals allow-popups" srcdoc="${safe}"></iframe></body></html>`
-    const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
+    if (!entry) { alert('Project me koi .html file nahi hai.'); return }
+    const url = URL.createObjectURL(new Blob([buildStandalone(deferred, cur.file || entry)], { type: 'text/html' }))
     const w = window.open(url, '_blank')
     if (!w) alert('Popup block ho gaya. Browser me popups allow karo.')
     setTimeout(() => URL.revokeObjectURL(url), 60000)
@@ -241,6 +243,14 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
         <span className={`flex items-center gap-1 text-[10px] truncate ${spReady ? 'text-emerald-400' : spStatus === 'timeout' ? 'text-red-400' : 'text-yellow-400'}`} title={shortRuntime}>
           {!spReady && spStatus !== 'timeout' && <Loader2 size={11} className="animate-spin" />}{statusLine}
         </span>
+        {runtime === 'static' && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button type="button" onClick={goBack} disabled={!canBack} title="Peeche" className="p-1 rounded text-mute hover:text-body hover:bg-raise disabled:opacity-30"><ArrowLeft size={14} /></button>
+            <button type="button" onClick={goForward} disabled={!canForward} title="Aage" className="p-1 rounded text-mute hover:text-body hover:bg-raise disabled:opacity-30"><ArrowRight size={14} /></button>
+            <button type="button" onClick={goHome} title="Pehla page" className="p-1 rounded text-mute hover:text-body hover:bg-raise"><Home size={14} /></button>
+            <span className="hidden md:block max-w-[180px] truncate text-[10px] font-mono text-faint px-1" title={pathLabel}>{pathLabel}</span>
+          </div>
+        )}
         <div className="flex-1" />
         <div className="hidden sm:flex items-center bg-raise rounded-md p-0.5 border border-edge shrink-0">
           {Object.entries(VIEWPORTS).map(([key, viewport]) => {
@@ -267,12 +277,21 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
         )}
       </div>
 
+      {runtime === 'static' && blockedUrl && (
+        <div className="shrink-0 flex items-center gap-2 px-2.5 py-1 text-[11px] border-b border-edge bg-yellow-500/10 text-yellow-400">
+          <span className="truncate">Bahar ka link: {blockedUrl}</span>
+          <a href={blockedUrl} target="_blank" rel="noopener noreferrer" className="font-bold underline shrink-0">Naye tab me kholo</a>
+          <div className="flex-1" />
+          <button type="button" onClick={() => setBlockedUrl(null)} className="text-faint hover:text-body">✕</button>
+        </div>
+      )}
+
       {/* Canvas */}
       <div className={`flex-1 min-h-0 flex justify-center bg-base ${vp === 'desktop' ? '' : 'p-2 overflow-auto'}`}>
         <div className={`relative bg-white overflow-hidden transition-[width] duration-300 ${vp === 'desktop' ? 'rounded-none' : 'rounded-xl shadow-2xl ring-1 ring-edge shrink-0'}`}
           style={{ width: active.width === '100%' ? '100%' : `${active.width}px`, maxWidth: '100%', height: '100%' }}>
           {runtime === 'sandpack' ? <SpPreview /> : (
-            <iframe key={reloadKey} title="Project live preview" sandbox="allow-scripts" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
+            <iframe ref={iframeRef} key={reloadKey} title="Project live preview" sandbox="allow-scripts allow-forms allow-modals allow-popups" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
           )}
           {runtime === 'sandpack' && spStatus === 'timeout' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-5 text-center bg-base/95 text-body">
