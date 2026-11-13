@@ -88,6 +88,38 @@ body {
 }
 `,
 }
+const TYPESCRIPT_FILES = {
+  'package.json': `{
+  "name": "bharatcodex-typescript",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "tsc -b && vite build", "preview": "vite preview" },
+  "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1" },
+  "devDependencies": { "@types/react": "^18.3.12", "@types/react-dom": "^18.3.1", "@vitejs/plugin-react": "^4.6.0", "typescript": "^5.7.2", "vite": "^6.3.5" }
+}
+`,
+  'index.html': `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>BharatCodex TypeScript</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>`,
+  'tsconfig.json': `{ "compilerOptions": { "target": "ES2020", "useDefineForClassFields": true, "lib": ["ES2020", "DOM", "DOM.Iterable"], "module": "ESNext", "skipLibCheck": true, "moduleResolution": "bundler", "allowImportingTsExtensions": true, "resolveJsonModule": true, "isolatedModules": true, "noEmit": true, "jsx": "react-jsx", "strict": true }, "include": ["src"] }`,
+  'vite.config.ts': `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()] })\n`,
+  'src/main.tsx': `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nimport './style.css'\nReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>)\n`,
+  'src/App.tsx': `type WelcomeProps = { title?: string }\nfunction Welcome({ title = 'BharatCodex TypeScript' }: WelcomeProps) { return <main><h1>{title}</h1><p>React + TypeScript + Vite ready hai.</p></main> }\nexport default function App() { return <Welcome /> }\n`,
+  'src/style.css': `*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0}main{min-height:100vh;display:grid;place-content:center;text-align:center;padding:2rem}h1{color:#60a5fa}\n`
+}
+
+const NODE_FILES = {
+  'package.json': `{
+  "name": "bharatcodex-node-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "dev": "node server.js", "start": "node server.js" }
+}
+`,
+  'server.js': `import { createServer } from 'node:http'\nconst port = Number(process.env.PORT || 3000)\nconst server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end('<h1>BharatCodex Node.js Server</h1><p>Server successfully running.</p>') })\nserver.listen(port, '0.0.0.0', () => console.log('Node server listening on ' + port))\n`,
+  'README.md': `# BharatCodex Node.js Project\n\nRun with ` + "`npm run dev`" + `. Edit server.js to build your API or server.\n`
+}
+
 // Firestore doc IDs me '/' allowed nahi, isliye encode karte hain
 const fileId = (file) => encodeURIComponent((file.folder ? file.folder + '/' : '') + file.name)
 const pathOf = (file) => (file.folder ? file.folder + '/' : '') + file.name
@@ -101,12 +133,12 @@ export async function createProject(user, name, type, isAdmin = false) {
     ownerIsAdmin: !!isAdmin, // true => Team role wale members ko ye project dikhega
     public: false,
     trashed: false,
-    folders: type === 'react' ? ['src', 'src/components'] : [],
+    folders: ['react', 'typescript'].includes(type) ? ['src', ...(type === 'react' ? ['src/components'] : [])] : [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   })
 
-  const templates = type === 'react' ? REACT_FILES : WEB_FILES
+  const templates = ({ react: REACT_FILES, typescript: TYPESCRIPT_FILES, node: NODE_FILES })[type] || WEB_FILES
   const batch = writeBatch(db)
   for (const [fpath, content] of Object.entries(templates)) {
     const cut = fpath.lastIndexOf('/')
