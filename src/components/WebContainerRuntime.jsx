@@ -163,6 +163,16 @@ export default function WebContainerRuntime({ files, projectName, onClose }) {
       })
       const process = await runtime.spawn('npm', ['run', 'dev', '--', '--host', '0.0.0.0'])
       devRef.current = process
+      ;(async () => {
+        const reader = process.output.getReader()
+        try {
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            log(value)
+          }
+        } catch (e) { log('Dev server output closed: ' + e.message) }
+      })()
       process.exit.then((code) => {
         stopListening()
         if (devRef.current === process) {
