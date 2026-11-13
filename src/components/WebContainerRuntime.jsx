@@ -18,7 +18,8 @@ async function getRuntime() {
 }
 
 async function writeProjectFiles(runtime, files) {
-  for (const [rawPath, rawContent] of Object.entries(files || {})) {
+  const sourceFiles = files || {}
+  for (const [rawPath, rawContent] of Object.entries(sourceFiles)) {
     const path = rawPath.replace(/^\/+/, '').split('/').filter((part) => part && part !== '.' && part !== '..').join('/')
     if (!path) continue
     const parts = path.split('/')
@@ -26,6 +27,16 @@ async function writeProjectFiles(runtime, files) {
       await runtime.fs.mkdir(parts.slice(0, -1).join('/'), { recursive: true })
     }
     await runtime.fs.writeFile(path, String(rawContent ?? ''))
+  }
+  if (!sourceFiles['package.json']) {
+    await runtime.fs.writeFile('package.json', JSON.stringify({
+      name: 'bharatcodex-web-project',
+      private: true,
+      version: '1.0.0',
+      type: 'module',
+      scripts: { dev: 'vite --host 0.0.0.0', build: 'vite build', preview: 'vite preview --host 0.0.0.0' },
+      devDependencies: { vite: '^6.3.5' }
+    }, null, 2))
   }
 }
 
