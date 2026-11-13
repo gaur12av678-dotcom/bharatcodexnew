@@ -15,10 +15,11 @@ import VersionHistory from '../components/VersionHistory'
 import GitHubPanel from '../components/GitHubPanel'
 import SearchPanel from '../components/SearchPanel'
 import PasteBox from '../components/PasteBox'
+import WebContainerRuntime from '../components/WebContainerRuntime'
 import JSZip from 'jszip'
 import {
   ArrowLeft, Check, FileCode2, Loader2, AlertCircle, CircleDashed,
-  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files, Github, ClipboardPaste, ClipboardCheck, Copy,
+  Wand2, WrapText, Minus, Plus, Download, PanelLeft, Globe, Lock, Eye, Share2, History, Search, Undo2, Files, Github, ClipboardPaste, ClipboardCheck, Copy, Terminal,
 } from 'lucide-react'
 
 const EXT_LANG = {
@@ -54,6 +55,7 @@ export default function EditorPage() {
   const [fileCopied, setFileCopied] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [showGithub, setShowGithub] = useState(false)
+  const [showRuntime, setShowRuntime] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
   const [sideTab, setSideTab] = useState('files') // 'files' ya 'search'
   const [undoStack, setUndoStack] = useState([])   // [{ id, label }] — destructive kaam se pehle ke backups
@@ -528,6 +530,10 @@ export default function EditorPage() {
                 <Undo2 size={15} />
                 <span className="hidden sm:inline">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
               </button>
+              <button type="button" onClick={() => setShowRuntime(true)} title="Node.js Runtime, Terminal aur Vite Dev Server" className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
+                <Terminal size={15} className="text-blue-400" />
+                <span className="hidden sm:inline">Runtime</span>
+              </button>
               <button type="button" onClick={() => setShowGithub(true)} title={project.github ? 'GitHub: ' + project.github.owner + '/' + project.github.repo : 'GitHub — naya repo, push, pull'} className={`${toolBtn} shrink-0 flex items-center gap-1 text-xs`}>
                 <Github size={15} className={project.github ? 'text-emerald-400' : ''} />
                 <span className="hidden sm:inline">GitHub</span>
@@ -684,6 +690,14 @@ export default function EditorPage() {
           initialMode={pasteMode}
           onApply={applyPaste}
           onClose={() => setPasteMode(null)}
+        />
+      )}
+
+      {showRuntime && (
+        <WebContainerRuntime
+          files={filesObj}
+          projectName={project.name}
+          onClose={() => setShowRuntime(false)}
         />
       )}
 
