@@ -1,4 +1,4 @@
-import { GithubAuthProvider, linkWithPopup, reauthenticateWithPopup } from 'firebase/auth'
+import { GithubAuthProvider, linkWithRedirect, reauthenticateWithRedirect } from 'firebase/auth'
 import { auth } from '../firebase/config'
 import { applyRemoteChanges } from './projectService'
 
@@ -15,9 +15,6 @@ const MAX_FILES = 400
 const isEligible = (path, size = 0) =>
   !SKIP.test(path) && !BINARY.test(path) && !LOCKFILES.test(path) && size <= MAX_FILE
 
-// =====================================================================
-// TOKEN (sirf is browser tab ke session me; Firestore me save nahi hota)
-// =====================================================================
 export const getGitHubToken = () => {
   try { return sessionStorage.getItem(TOKEN_KEY) || '' } catch { return '' }
 }
@@ -28,50 +25,39 @@ export const rememberGitHubToken = (token, scope = 'basic') => {
   try {
     sessionStorage.setItem(TOKEN_KEY, token)
     sessionStorage.setItem(SCOPE_KEY, scope)
-  } catch { /* ignore */ }
+  } catch {}
 }
 export const clearGitHubToken = () => {
   try {
     sessionStorage.removeItem(TOKEN_KEY)
     sessionStorage.removeItem(SCOPE_KEY)
-  } catch { /* ignore */ }
+    sessionStorage.removeItem('bc_gh_requested_scope')
+  } catch {}
 }
 
-// Google se sign-in wale user ke account me GitHub "link" hota hai (naya account nahi banta).
-// privateRepos = true => 'repo' permission (private repos + push/create ke liye zaroori)
+// GitHub authorization redirect flow: cross-origin isolated pages popup OAuth use nahi karte.
 export async function connectGitHub({ privateRepos = false } = {}) {
   const user = auth.currentUser
   if (!user) throw new Error('NOT_SIGNED_IN')
-
   const provider = new GithubAuthProvider()
   provider.addScope('read:user')
+  provider.addScope('user:email')
   if (privateRepos) provider.addScope('repo')
-
-  const alreadyLinked = user.providerData.some((p) => p.providerId === 'github.com')
-  let result
   try {
-    result = alreadyLinked
-      ? await reauthenticateWithPopup(user, provider)
-      : await linkWithPopup(user, provider)
-  } catch (e) {
-    if (e?.code === 'auth/provider-already-linked') {
-      result = await reauthenticateWithPopup(user, provider)
-    } else {
-      throw e
-    }
+    if (privateRepos) sessionStorage.setItem('bc_gh_requested_scope', 'repo')
+    const alreadyLinked = user.providerData.some((p) => p.providerId === 'github.com')
+    if (alreadyLinked) await reauthenticateWithRedirect(user, provider)
+    else await linkWithRedirect(user, provider)
+  } catch (error) {
+    try { sessionStorage.removeItem('bc_gh_requested_scope') } catch {}
+    throw error
   }
-  const token = GithubAuthProvider.credentialFromResult(result)?.accessToken
-  if (!token) throw new Error('NO_TOKEN')
-  rememberGitHubToken(token, privateRepos ? 'repo' : 'basic')
-  return token
 }
 
 // =====================================================================
 // GitHub API helper
 // =====================================================================
 async function api(path, token, { method = 'GET', body } = {}) {
-  // GitHub GET jawab browser me ~60 sec cache karta hai => push ke turant baad purana commit dikhta tha.
-  // Isliye cache band + har GET pe naya number laga do.
   const url = method === 'GET'
     ? API + path + (path.includes('?') ? '&' : '?') + '_=' + Date.now()
     : API + path
@@ -93,7 +79,7 @@ async function api(path, token, { method = 'GET', body } = {}) {
   if (res.status === 409) throw new Error('GH_CONFLICT')
   if (res.status === 422) {
     let msg = ''
-    try { msg = JSON.stringify(await res.json()) } catch { /* ignore */ }
+    try { msg = JSON.stringify(await res.json()) } catch {}
     throw new Error(/already exists/i.test(msg) ? 'GH_NAME_EXISTS' : 'GH_INVALID')
   }
   if (!res.ok) throw new Error('GH_ERROR_' + res.status)
@@ -119,6 +105,24 @@ export async function listRepos(token) {
     description: r.description || '',
     updatedAt: r.pushed_at || r.updated_at,
   }))
+}
+
+export async function listBranches(token, github) {
+  const rows = await api(`/repos/${github.owner}/${github.repo}/branches?per_page=100`, token)
+  return rows.map((row) => row.name)
+}
+
+export async function createGitHubBranch(token, github, branchName) {
+  const name = String(branchName || '').trim()
+  if (!/^[A-Za-z0-9._/-]{1,100}$/.test(name) || name.startsWith('/') || name.endsWith('/') || name.includes('..')) {
+    throw new Error('GH_INVALID_BRANCH_NAME')
+  }
+  const base = await api(`/repos/${github.owner}/${github.repo}/branches/${encodeURIComponent(github.branch)}`, token)
+  await api(`/repos/${github.owner}/${github.repo}/git/refs`, token, {
+    method: 'POST',
+    body: { ref: 'refs/heads/' + name, sha: base.commit.sha }
+  })
+  return name
 }
 
 // "owner/repo", "github.com/owner/repo", "https://github.com/owner/repo/tree/main" — sab chalega

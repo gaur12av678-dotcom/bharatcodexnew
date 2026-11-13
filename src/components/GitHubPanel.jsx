@@ -3,7 +3,7 @@ import { Github, X, Loader2, ArrowUpFromLine, ArrowDownToLine, RefreshCw, Extern
 import { createVersion, getProjectFiles, setProjectGitHub } from '../services/projectService'
 import {
   connectGitHub, getGitHubToken, hasRepoScope, createRepo, linkExistingRepo,
-  parseRepo, getStatus, pushFiles, pullFromGitHub, listRepos,
+  parseRepo, getStatus, pushFiles, pullFromGitHub, listRepos, listBranches, createGitHubBranch,
 } from '../services/githubService'
 
 const errorText = (e) => {
@@ -29,6 +29,8 @@ const errorText = (e) => {
       return 'Is naam ka repo tumhare account me pehle se hai. Dusra naam chuno.'
     case 'GH_INVALID':
       return 'GitHub ne request reject ki. Repo ka naam check karo.'
+    case 'GH_INVALID_BRANCH_NAME':
+      return 'Branch name valid nahi hai. Letters, numbers, slash, dot, dash ya underscore use karo.'
     case 'GH_STALE':
       return 'GitHub abhi tumhara pichla push sync kar raha hai. 10-20 second baad dobara try karo.'
     case 'GH_BEHIND':
@@ -55,6 +57,8 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [status, setStatus] = useState(null) // { behind, changed, deleted }
+  const [branches, setBranches] = useState([])
+  const [newBranch, setNewBranch] = useState('')
 
   const [repoName, setRepoName] = useState(slug(project.name))
   const [desc, setDesc] = useState('')
@@ -83,6 +87,44 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
 
   useEffect(() => { refreshStatus() }, [refreshStatus])
 
+  useEffect(() => {
+    if (!gh || !ready) { setBranches([]); return }
+    let alive = true
+    listBranches(getGitHubToken(), gh)
+      .then((items) => { if (alive) setBranches(items) })
+      .catch((e) => { if (alive) fail(e) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gh?.owner, gh?.repo, gh?.branch, ready])
+
+  const handleSwitchBranch = async (branch) => {
+    if (!gh || !branch || branch === gh.branch || busy) return
+    if (!window.confirm('Branch ' + branch + ' ka code is BharatCodex project me load hoga. Pehle current files ka version backup banega. Aage badho?')) return
+    setBusy('branch'); setError(''); setNotice(''); setProgress('Branch switch ho raha hai...')
+    try {
+      const files = await freshFiles()
+      await createVersion(projectId, user, files, project.folders || [], 'Auto: GitHub branch switch se pehle', true)
+      const target = { ...gh, branch, headSha: '' }
+      const result = await pullFromGitHub({ token, github: target, projectId, files, user, onProgress: (d, t) => setProgress('Branch pull ' + d + '/' + t) })
+      onChanged({ github: result.github, reload: true })
+      setNotice('Branch switched: ' + branch)
+    } catch (e) { fail(e) }
+    finally { setBusy(''); setProgress('') }
+  }
+
+  const handleCreateBranch = async (event) => {
+    event.preventDefault()
+    if (!gh || busy || !newBranch.trim()) return
+    setBusy('branch-create'); setError(''); setNotice('')
+    try {
+      const created = await createGitHubBranch(token, gh, newBranch.trim())
+      setBranches((items) => [...new Set([...items, created])].sort())
+      setNewBranch('')
+      setNotice('Branch ban gayi: ' + created + '. Branch dropdown se switch kar sakte ho.')
+    } catch (e) { fail(e) }
+    finally { setBusy(''); setProgress('') }
+  }
+
   // Link nahi hai to project ke naam se milte-julte repos suggest karo
   useEffect(() => {
     if (gh || !ready) { setSuggestions([]); return }
@@ -102,8 +144,8 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
     if (busy) return
     setBusy('connect'); setError('')
     try {
-      const t = await connectGitHub({ privateRepos: true })
-      setToken(t); setReady(true)
+      await connectGitHub({ privateRepos: true })
+      setNotice('GitHub authorization ke baad BharatCodex par wapas aa jaoge. GitHub panel dobara kholo.')
     } catch (e) { fail(e) } finally { setBusy('') }
   }
 
@@ -295,6 +337,22 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
                 <button type="button" onClick={refreshStatus} disabled={!!busy} title="Status dobara check karo"
                   className="ml-auto p-1 rounded text-faint hover:text-body disabled:opacity-50"><RefreshCw size={13} /></button>
               </div>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-edge p-3">
+              <label className="block text-xs font-semibold text-mute mb-1.5">Git branches</label>
+              <select value={gh.branch} onChange={(e) => handleSwitchBranch(e.target.value)} disabled={!!busy || branches.length === 0}
+                className="w-full bg-raise border border-edge rounded-lg px-3 py-2 text-body text-sm disabled:opacity-50">
+                {branches.length === 0 ? <option value={gh.branch}>{gh.branch} · loading branches…</option> : branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+              </select>
+              <form onSubmit={handleCreateBranch} className="flex gap-2 mt-2">
+                <input value={newBranch} onChange={(e) => setNewBranch(e.target.value)} disabled={!!busy} placeholder="new-branch-name"
+                  className="min-w-0 flex-1 bg-raise border border-edge rounded-lg px-3 py-2 text-body text-xs focus:outline-none focus:border-blue-500" />
+                <button type="submit" disabled={!!busy || !newBranch.trim()} className="px-3 py-2 rounded-lg bg-raise border border-edge text-body text-xs font-semibold disabled:opacity-40">
+                  {busy === 'branch-create' ? 'Creating…' : 'Create branch'}
+                </button>
+              </form>
+              <p className="text-[10px] text-faint mt-2">Branch switch karne se pehle project ka backup Version History me save hota hai.</p>
             </div>
 
             <label htmlFor="gh-msg" className="block text-sm text-mute mb-1.5">Commit message</label>
