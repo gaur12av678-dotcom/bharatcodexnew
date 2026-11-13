@@ -102,8 +102,8 @@ export default function GitHubPanel({ project, projectId, user, onBeforeAction, 
     if (busy) return
     setBusy('connect'); setError('')
     try {
-      const t = await connectGitHub({ privateRepos: true })
-      setToken(t); setReady(true)
+      await connectGitHub({ privateRepos: true })
+      setNotice('GitHub authorization ke baad BharatCodex par wapas aa jaoge. GitHub panel dobara kholo.')
     } catch (e) { fail(e) } finally { setBusy('') }
   }
 
