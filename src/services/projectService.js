@@ -117,7 +117,7 @@ const NODE_FILES = {
 }
 `,
   'server.js': `import { createServer } from 'node:http'\nconst port = Number(process.env.PORT || 3000)\nconst server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end('<h1>BharatCodex Node.js Server</h1><p>Server successfully running.</p>') })\nserver.listen(port, '0.0.0.0', () => console.log('Node server listening on ' + port))\n`,
-  'README.md': `# BharatCodex Node.js Project\n\nRun with ` + "`npm run dev`" + `. Edit server.js to build your API or server.\n`
+  'README.md': `# BharatCodex Node.js Project\n\nRun with npm run dev. Edit server.js to build your API or server.\n`
 }
 
 // Firestore doc IDs me '/' allowed nahi, isliye encode karte hain
