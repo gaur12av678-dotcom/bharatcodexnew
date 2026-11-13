@@ -223,7 +223,7 @@ export function analyzeProject(files) {
 
   // Preview kaise chalega
   const needsBundler = usesReact || usesVite || !!moduleScript || (!!pkg && !!deps.react)
-  const runtime = needsBundler ? 'sandpack' : 'static'
+  const runtime = needsBundler ? 'bharat' : 'static'
   const kind = usesReact && usesVite ? 'React + Vite' : usesReact ? 'React' : usesVite ? 'Vite' : moduleScript ? 'JS modules' : 'HTML / CSS / JS'
 
   return {
@@ -327,7 +327,7 @@ export function scanProject(files, analysis = analyzeProject(files)) {
             fix: { kind: 'fix-case', spec, actual: hit.path, label: 'Import ka naam sahi karo' },
           })
         }
-      } else if (hasPkg || analysis.runtime === 'sandpack') {
+      } else if (hasPkg || analysis.runtime === 'bharat') {
         const pkgName = packageNameOf(spec)
         if (!deps[pkgName]) {
           const dupe = issues.find((x) => x.kind === 'missing-dep' && x.name === pkgName)
@@ -389,7 +389,7 @@ export function buildCheck(files, analysis = analyzeProject(files), issues = sca
 }
 
 // ---------- Preview ke liye files taiyaar karo ----------
-// Preview "classic" Sandpack bundler par chalta hai (Vite nahi). Aapki asli files nahi badalti — sirf preview ki copy banati hai.
+// Preview "classic" Bharat Preview Engine par chalta hai (Vite nahi). Aapki asli files nahi badalti — sirf preview ki copy banati hai.
 const TOOLING = /^(vite|@vitejs\/|tailwindcss|postcss|autoprefixer|eslint|@types\/|typescript|prettier|wrangler)/
 
 // Naya package.json (jab project me nahi hai) — Packages tab ka "package.json banao" isse banata hai

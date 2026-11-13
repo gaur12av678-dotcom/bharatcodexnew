@@ -1,34 +1,10 @@
-import { Component, Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Monitor, Smartphone, Tablet, RefreshCw, Terminal, Trash2, ExternalLink, Loader2, CheckCircle2, ArrowLeft, ArrowRight, Home } from 'lucide-react'
-import { useTheme } from '../context/ThemeContext'
-import { analyzeProject, scanProject, buildCheck, makePreviewFiles, buildDefaultPackage } from '../utils/projectAnalyzer.js'
+import { analyzeProject, scanProject, buildCheck, buildDefaultPackage } from '../utils/projectAnalyzer.js'
 import { applyFixes, explainRuntimeError, addDependencyEdits, removeDependencyEdits } from '../utils/errorFixer.js'
 import { ProblemsTab, BuildTab, PackagesTab } from './DevPanels'
 import { pickEntry, resolveTarget, srcDocFor, buildStandalone } from '../utils/staticPreview.js'
-
-// React/Vite runtime (Sandpack) — zaroorat padne par hi load hota hai
-const Shell = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Shell })))
-const SpPreview = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.PreviewPane })))
-const SpConsole = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.ConsolePane })))
-const SpBridge = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.Bridge })))
-const SpNewTab = lazy(() => import('./SandpackParts.jsx').then((m) => ({ default: m.OpenInCsb })))
-
-class PreviewBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null } }
-  static getDerivedStateFromError(error) { return { error } }
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="h-full flex flex-col items-center justify-center gap-2 p-4 text-center bg-base text-body">
-          <p className="font-semibold text-red-400">Preview engine load nahi hua</p>
-          <p className="text-xs text-mute break-words max-w-md">{String(this.state.error?.message || this.state.error)}</p>
-          <p className="text-xs text-faint">Check karo ki "npm install" ke baad @codesandbox/sandpack-react install hua hai aur internet chal raha hai.</p>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
+import BharatPreviewEngine from './BharatPreviewEngine.jsx'
 
 const VIEWPORTS = {
   mobile: { width: 375, icon: Smartphone },
@@ -49,13 +25,12 @@ const STATUS_TEXT = {
 const nowStr = () => new Date().toLocaleTimeString('en-IN', { hour12: false })
 
 export default function Preview({ type, files, readOnly = false, onApplyEdits, onOpenFile }) {
-  const { theme } = useTheme()
   const [vp, setVp] = useState('desktop')
   const [reloadKey, setReloadKey] = useState(0)
   const [logs, setLogs] = useState([])
   const [showPanel, setShowPanel] = useState(false)
   const [tab, setTab] = useState('console')
-  const [spStatus, setSpStatus] = useState('initial')
+  const [engineStatus, setEngineStatus] = useState('initial')
   const [runtimeError, setRuntimeError] = useState(null)
   const [buildLog, setBuildLog] = useState([])
   const [fixing, setFixing] = useState(false)
@@ -71,16 +46,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const build = useMemo(() => buildCheck(deferred, analysis, issues), [deferred, analysis, issues])
 
   // React project ko kabhi simple HTML preview me nahi chalana
-  const runtime = type === 'react' || analysis.runtime === 'sandpack' ? 'sandpack' : 'static'
-  const effectiveAnalysis = useMemo(() => (runtime === 'sandpack' && analysis.runtime !== 'sandpack' ? { ...analysis, runtime: 'sandpack', usesReact: true } : analysis), [runtime, analysis])
-  const preview = useMemo(() => (runtime === 'sandpack' ? makePreviewFiles(deferred, effectiveAnalysis) : null), [runtime, deferred, effectiveAnalysis])
-
-  const spFiles = useMemo(() => {
-    if (!preview) return null
-    const out = {}
-    for (const [p, c] of Object.entries(preview.files)) out[p.startsWith('/') ? p : '/' + p] = c
-    return out
-  }, [preview])
+  const runtime = type === 'react' || analysis.runtime === 'bharat' ? 'bharat' : 'static'
+  const preview = null
 
   // ---- Static (HTML/CSS/JS) multi-page router ----
   const entry = useMemo(() => pickEntry(deferred), [deferred])
@@ -184,7 +151,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   const addAllMissing = () => doFix(issues.filter((i) => i.kind === 'missing-dep'))
   const createPackage = () => runEdits({ edits: [], creates: [{ path: 'package.json', content: buildDefaultPackage(files, analysis) }] }, 'package.json banana')
 
-  const spReady = runtime !== 'sandpack' || spStatus === 'done' || spStatus === 'idle'
+  const spReady = runtime !== 'bharat' || engineStatus === 'done' || engineStatus === 'idle'
   const clean = errorCount === 0
   const banner = fixedAt ? (
     <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${clean && spReady ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' : 'border-yellow-500/40 text-yellow-400 bg-yellow-500/10'}`}>
@@ -196,12 +163,12 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
   ) : null
 
   const active = VIEWPORTS[vp]
-  const shortRuntime = runtime === 'sandpack' ? analysis.kind + ' · live bundler' : 'HTML / CSS / JS'
-  const statusLine = runtime === 'sandpack' ? STATUS_TEXT[spStatus] || spStatus : 'Ready'
+  const shortRuntime = runtime === 'bharat' ? analysis.kind + ' · Bharat Preview Engine' : 'HTML / CSS / JS'
+  const statusLine = runtime === 'bharat' ? (engineStatus === 'done' ? 'Ready' : engineStatus === 'error' ? 'Build error' : STATUS_TEXT[engineStatus] || engineStatus) : 'Ready'
 
   // Preview ko naye tab me kholo (sirf simple HTML projects ke liye). React ke liye "Reload" use karo.
   const openInNewTab = () => {
-    if (runtime !== 'static') { alert('React/Vite preview naye tab me nahi khulta. Production ke liye hosting par deploy karo.'); return }
+    if (runtime !== 'static') { alert('React preview is running inside Bharat Codex.'); return }
     if (!entry) { alert('Project me koi .html file nahi hai.'); return }
     const url = URL.createObjectURL(new Blob([buildStandalone(deferred, cur.file || entry)], { type: 'text/html' }))
     const w = window.open(url, '_blank')
@@ -240,8 +207,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
       {/* Toolbar */}
       <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-edge bg-surface overflow-x-auto">
         <span className="text-[11px] font-bold text-faint uppercase tracking-widest shrink-0">Preview</span>
-        <span className={`flex items-center gap-1 text-[10px] truncate ${spReady ? 'text-emerald-400' : spStatus === 'timeout' ? 'text-red-400' : 'text-yellow-400'}`} title={shortRuntime}>
-          {!spReady && spStatus !== 'timeout' && <Loader2 size={11} className="animate-spin" />}{statusLine}
+        <span className={`flex items-center gap-1 text-[10px] truncate ${spReady ? 'text-emerald-400' : engineStatus === 'timeout' ? 'text-red-400' : 'text-yellow-400'}`} title={shortRuntime}>
+          {!spReady && engineStatus !== 'timeout' && <Loader2 size={11} className="animate-spin" />}{statusLine}
         </span>
         {runtime === 'static' && (
           <div className="flex items-center gap-0.5 shrink-0">
@@ -263,13 +230,11 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
             )
           })}
         </div>
-        <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]); setSpStatus('initial') }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
+        <button type="button" onClick={() => { setReloadKey((k) => k + 1); setLogs([]); setEngineStatus('initial') }} title="Reload" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
           <RefreshCw size={14} />
         </button>
-        {runtime === 'sandpack' ? (
-          <Suspense fallback={null}>
-            <SpNewTab className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition" />
-          </Suspense>
+        {runtime === 'bharat' ? (
+          <span className="text-[10px] text-faint px-1">Local engine</span>
         ) : (
           <button type="button" onClick={openInNewTab} title="New tab me kholo" className="p-1.5 rounded-md text-mute hover:text-body hover:bg-raise transition">
             <ExternalLink size={14} />
@@ -290,15 +255,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
       <div className={`flex-1 min-h-0 flex justify-center bg-base ${vp === 'desktop' ? '' : 'p-2 overflow-auto'}`}>
         <div className={`relative bg-white overflow-hidden transition-[width] duration-300 ${vp === 'desktop' ? 'rounded-none' : 'rounded-xl shadow-2xl ring-1 ring-edge shrink-0'}`}
           style={{ width: active.width === '100%' ? '100%' : `${active.width}px`, maxWidth: '100%', height: '100%' }}>
-          {runtime === 'sandpack' ? <SpPreview /> : (
+          {runtime === 'bharat' ? <BharatPreviewEngine files={deferred} analysis={analysis} reloadKey={reloadKey} onStatus={setEngineStatus} onError={setRuntimeError} onLog={addBuildLog} /> : (
             <iframe ref={iframeRef} key={reloadKey} title="Project live preview" sandbox="allow-scripts allow-forms allow-modals allow-popups" srcDoc={srcDoc} className="block w-full h-full bg-white border-0" />
-          )}
-          {runtime === 'sandpack' && spStatus === 'timeout' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-5 text-center bg-base/95 text-body">
-              <p className="font-semibold text-red-400">Preview server se connect nahi hua</p>
-              <p className="text-xs text-mute max-w-xs">Internet check karo. Site ko <b>https://</b> link se kholo (http se nahi). Phir Reload dabao.</p>
-              <button type="button" onClick={() => { setReloadKey((k) => k + 1); setSpStatus('initial') }} className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold">Reload</button>
-            </div>
           )}
         </div>
       </div>
@@ -322,7 +280,7 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
         <div className={`flex-1 min-h-0 overflow-y-auto border-t border-edge ${showPanel ? '' : 'hidden'}`}>
           {/* Console hamesha mount rehta hai taaki logs na khoyein */}
           <div className={tab === 'console' ? 'h-full' : 'hidden'}>
-            {runtime === 'sandpack' ? <SpConsole /> : staticConsole}
+            {staticConsole}
           </div>
           {tab === 'problems' && (
             <ProblemsTab issues={problems} readOnly={readOnly || !onApplyEdits} fixing={fixing} banner={banner} onFix={doFix} onOpen={openFile} />
@@ -343,19 +301,8 @@ export default function Preview({ type, files, readOnly = false, onApplyEdits, o
           )}
         </div>
       </div>
-      {runtime === 'sandpack' && <SpBridge onStatus={setSpStatus} onError={setRuntimeError} onLog={addBuildLog} />}
     </div>
   )
 
-  if (runtime === 'static') return body
-
-  return (
-    <PreviewBoundary>
-      <Suspense fallback={<div className="h-full flex items-center justify-center bg-base text-faint text-sm gap-2"><Loader2 size={16} className="animate-spin" /> Preview engine load ho raha hai...</div>}>
-        <Shell key={reloadKey + ':' + preview.depsKey} files={spFiles} entry={preview.entry} externalResources={preview.externalResources} theme={theme === 'light' ? 'light' : 'dark'}>
-          {body}
-        </Shell>
-      </Suspense>
-    </PreviewBoundary>
-  )
+  return body
 }
