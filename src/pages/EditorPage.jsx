@@ -475,8 +475,8 @@ export default function EditorPage() {
         </button>
         <Link to="/" className={`${toolBtn} shrink-0`} aria-label="Back"><ArrowLeft size={17} /></Link>
         <h2 className="text-body font-semibold truncate min-w-0 max-w-[40vw] sm:max-w-xs">{project.name}</h2>
-        <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${project.type === 'react' ? 'text-cyan-300 bg-cyan-500/10' : 'text-emerald-300 bg-emerald-500/10'}`}>
-          {project.type}
+        <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${project.type === 'react' ? 'text-cyan-300 bg-cyan-500/10' : project.type === 'typescript' ? 'text-blue-300 bg-blue-500/10' : project.type === 'node' ? 'text-violet-300 bg-violet-500/10' : 'text-emerald-300 bg-emerald-500/10'}`}>
+          {({ react: 'React', typescript: 'TypeScript', node: 'Node.js', web: 'Web' })[project.type] || project.type}
         </span>
 
         {readOnly && (
