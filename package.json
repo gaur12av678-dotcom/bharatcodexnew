@@ -10,7 +10,6 @@
     "android:sync": "npm run build && cap sync android"
   },
   "dependencies": {
-    "@codesandbox/sandpack-react": "^2.19.8",
     "@monaco-editor/react": "^4.6.0",
     "firebase": "^10.14.1",
     "jszip": "^3.10.1",
@@ -19,7 +18,8 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.27.0",
     "@capacitor/android": "^7.4.3",
-    "@capacitor/core": "^7.4.3"
+    "@capacitor/core": "^7.4.3",
+    "esbuild-wasm": "^0.25.12"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.6.0",
