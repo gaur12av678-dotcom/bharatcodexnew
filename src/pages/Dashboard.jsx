@@ -361,7 +361,7 @@ const handleRestore = async (project) => {
                       <Globe size={12} />
                     )}
 
-                    {project.type === 'react' ? 'React' : 'Web'}
+                    {({ react: 'React', typescript: 'TypeScript', node: 'Node.js', web: 'Web' })[project.type] || 'Web'}
                   </span>
 
                   <div className="flex items-center gap-1">
