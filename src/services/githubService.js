@@ -107,6 +107,24 @@ export async function listRepos(token) {
   }))
 }
 
+export async function listBranches(token, github) {
+  const rows = await api(`/repos/${github.owner}/${github.repo}/branches?per_page=100`, token)
+  return rows.map((row) => row.name)
+}
+
+export async function createGitHubBranch(token, github, branchName) {
+  const name = String(branchName || '').trim()
+  if (!/^[A-Za-z0-9._/-]{1,100}$/.test(name) || name.startsWith('/') || name.endsWith('/') || name.includes('..')) {
+    throw new Error('GH_INVALID_BRANCH_NAME')
+  }
+  const base = await api(`/repos/${github.owner}/${github.repo}/branches/${encodeURIComponent(github.branch)}`, token)
+  await api(`/repos/${github.owner}/${github.repo}/git/refs`, token, {
+    method: 'POST',
+    body: { ref: 'refs/heads/' + name, sha: base.commit.sha }
+  })
+  return name
+}
+
 // "owner/repo", "github.com/owner/repo", "https://github.com/owner/repo/tree/main" — sab chalega
 export function parseRepo(input) {
   const clean = (input || '')
