@@ -194,23 +194,31 @@ export default function WebContainerRuntime({ files, projectName, onClose }) {
     setError('')
     try {
       await writeProjectFiles(runtime, filesRef.current)
-      const process = await runtime.spawn('npm', ['run', 'build'])
-      const reader = process.output.getReader()
-      const readOutput = (async () => {
-        while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          log(value)
-        }
-      })()
-      const code = await process.exit
-      await readOutput
-      if (code !== 0) throw new Error('Build failed (exit code ' + code + ')')
-      const zip = await runtime.export('dist', { format: 'zip' })
-      downloadBytes(zip, (projectName || 'bharatcodex-project').replace(/[^a-z0-9-_]/gi, '-') + '-dist.zip')
+      let packageInfo = {}
+      try { packageInfo = JSON.parse(filesRef.current['package.json'] || '{}') } catch {}
+      let exportPath = '.'
+      if (packageInfo.scripts?.build) {
+        const process = await runtime.spawn('npm', ['run', 'build'])
+        const reader = process.output.getReader()
+        const readOutput = (async () => {
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            log(value)
+          }
+        })()
+        const code = await process.exit
+        await readOutput
+        if (code !== 0) throw new Error('Build failed (exit code ' + code + ')')
+        exportPath = 'dist'
+      } else {
+        log('No build script found. Exporting the project source instead.')
+      }
+      const zip = await runtime.export(exportPath, { format: 'zip', excludes: ['node_modules', '.git'] })
+      downloadBytes(zip, (projectName || 'bharatcodex-project').replace(/[^a-z0-9-_]/gi, '-') + (exportPath === 'dist' ? '-dist.zip' : '-source.zip'))
       setBuilt(true)
-      log('Production build exported as ZIP.')
-    } catch (e) { setError(e.message); log('Build failed: ' + e.message) }
+      log(exportPath === 'dist' ? 'Production build exported as ZIP.' : 'Project source exported as ZIP.')
+    } catch (e) { setError(e.message); log('Build/export failed: ' + e.message) }
     finally { setBusy('') }
   }
 
