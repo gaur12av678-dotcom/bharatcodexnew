@@ -30,6 +30,8 @@ import {
   X,
   Globe,
   Atom,
+  Code2,
+  Server,
   Upload,
   RotateCcw,
   Pin,
@@ -484,33 +486,23 @@ const handleRestore = async (project) => {
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-              <button
-                type="button"
-                onClick={() => setType('web')}
-                aria-pressed={type === 'web'}
-                className={`flex items-center justify-center gap-2 py-3 rounded-xl border font-medium transition ${
-                  type === 'web'
-                    ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
-                    : 'border-edge text-mute hover:border-faint'
-                }`}
-              >
-                <Globe size={16} />
-                HTML / CSS / JS
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setType('react')}
-                aria-pressed={type === 'react'}
-                className={`flex items-center justify-center gap-2 py-3 rounded-xl border font-medium transition ${
-                  type === 'react'
-                    ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                    : 'border-edge text-mute hover:border-faint'
-                }`}
-              >
-                <Atom size={16} />
-                React
-              </button>
+              {[
+                { id: 'web', label: 'HTML / CSS / JS', Icon: Globe, active: 'border-emerald-500 bg-emerald-500/10 text-emerald-300' },
+                { id: 'react', label: 'React + Vite', Icon: Atom, active: 'border-cyan-500 bg-cyan-500/10 text-cyan-300' },
+                { id: 'typescript', label: 'React + TypeScript', Icon: Code2, active: 'border-blue-500 bg-blue-500/10 text-blue-300' },
+                { id: 'node', label: 'Node.js Server', Icon: Server, active: 'border-violet-500 bg-violet-500/10 text-violet-300' },
+              ].map(({ id, label, Icon, active }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setType(id)}
+                  aria-pressed={type === id}
+                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border font-medium transition ${type === id ? active : 'border-edge text-mute hover:border-faint'}`}
+                >
+                  <Icon size={16} />
+                  {label}
+                </button>
+              ))}
             </div>
 
             <button
