@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { onAuthStateChanged, signInWithPopup, signOut, GithubAuthProvider } from 'firebase/auth'
+import { onAuthStateChanged, signInWithRedirect, signOut, GithubAuthProvider, getRedirectResult } from 'firebase/auth'
 import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore'
 import { auth, db, googleProvider, githubProvider } from '../firebase/config'
 import { rememberGitHubToken } from '../services/githubService'
@@ -8,8 +8,7 @@ const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
 
 // RULE: Jo pehla sign in karega, wahi ADMIN banega.
-// meta/app doc race-safe transaction se handle hota hai —
-// do log ek saath first-time aaye tab bhi sirf ek hi admin banega.
+// meta/app doc race-safe transaction se handle hota hai.
 const ensureUserDoc = async (user) => {
   const userRef = doc(db, 'users', user.uid)
   const snap = await getDoc(userRef)
@@ -29,13 +28,10 @@ const ensureUserDoc = async (user) => {
         role,
         createdAt: Date.now(),
       })
-      if (!adminAssigned) {
-        tx.set(configRef, { adminAssigned: true, adminUid: user.uid }, { merge: true })
-      }
+      if (!adminAssigned) tx.set(configRef, { adminAssigned: true, adminUid: user.uid }, { merge: true })
     })
     return { role }
   } catch (e) {
-    // Race case: kisi aur ne pehle admin bana liya
     const again = await getDoc(userRef)
     if (again.exists()) return again.data()
     throw e
@@ -43,11 +39,25 @@ const ensureUserDoc = async (user) => {
 }
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null)       // Firebase auth user
-  const [profile, setProfile] = useState(null) // Firestore user doc
+  const [user, setUser] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Redirect-based OAuth popup isolation ke saath compatible hai.
+    getRedirectResult(auth).then((result) => {
+      if (!result) return
+      const token = GithubAuthProvider.credentialFromResult(result)?.accessToken
+      if (token) {
+        let scope = 'basic'
+        try {
+          scope = sessionStorage.getItem('bc_gh_requested_scope') === 'repo' ? 'repo' : 'basic'
+          sessionStorage.removeItem('bc_gh_requested_scope')
+        } catch {}
+        rememberGitHubToken(token, scope)
+      }
+    }).catch((error) => console.error('OAuth redirect result failed:', error))
+
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u)
       if (u) {
@@ -66,13 +76,11 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   const signInWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider)
+    await signInWithRedirect(auth, googleProvider)
   }
 
   const signInWithGitHub = async () => {
-    const result = await signInWithPopup(auth, githubProvider)
-    const token = GithubAuthProvider.credentialFromResult(result)?.accessToken
-    if (token) rememberGitHubToken(token, 'basic')
+    await signInWithRedirect(auth, githubProvider)
   }
 
   const logout = () => signOut(auth)
